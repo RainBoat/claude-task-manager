@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Smooth transitions for theme switching */
+html {
+  transition: background-color 0.2s, color 0.2s;
+}
+
+/* Custom scrollbar for kanban */
+.kanban-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+.kanban-scroll::-webkit-scrollbar-track {
+  @apply bg-gray-100 dark:bg-gray-800 rounded;
+}
+.kanban-scroll::-webkit-scrollbar-thumb {
+  @apply bg-gray-300 dark:bg-gray-600 rounded;
+}
+
+/* Log terminal */
+.log-terminal {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+}

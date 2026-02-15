@@ -1,0 +1,19 @@
+# Dependencies
+frontend/node_modules/
+
+# Build output
+manager/static/dist/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment & secrets
+.env
+
+# Runtime data
+data/
+
+# OS
+.DS_Store

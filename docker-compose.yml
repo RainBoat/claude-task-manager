@@ -1,0 +1,21 @@
+services:
+  claude-dev:
+    build: .
+    container_name: claude-parallel-dev
+    env_file: .env
+    ports:
+      - "${WEB_PORT:-8420}:${WEB_PORT:-8420}"
+    volumes:
+      - dev-data:/app/data
+    deploy:
+      resources:
+        limits:
+          cpus: "28"
+          memory: 96g
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+
+volumes:
+  dev-data:
+    driver: local

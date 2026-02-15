@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Parallel Dev</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <h1>Claude Parallel Dev</h1>
+        <span id="status-indicator" class="status-dot"></span>
+    </header>
+
+    <main>
+        <!-- Task Input -->
+        <section class="panel" id="task-input-panel">
+            <h2>Add Task</h2>
+            <form id="task-form">
+                <div class="form-row">
+                    <input type="text" id="task-title" placeholder="Task title" required>
+                    <select id="task-priority">
+                        <option value="0">Normal</option>
+                        <option value="1">High</option>
+                        <option value="2">Urgent</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <textarea id="task-desc" placeholder="Task description..." rows="3" required></textarea>
+                    <button type="button" id="voice-btn" class="icon-btn" title="Voice input">&#127908;</button>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">Add Task</button>
+                </div>
+            </form>
+            <div id="voice-status" class="voice-status hidden"></div>
+        </section>
+
+        <!-- Task Queue -->
+        <section class="panel" id="task-panel">
+            <h2>Task Queue <span id="task-count" class="badge">0</span></h2>
+            <div id="task-list" class="task-list"></div>
+        </section>
+
+        <!-- Workers -->
+        <section class="panel" id="worker-panel">
+            <h2>Workers <span id="worker-count" class="badge">0</span></h2>
+            <div id="worker-list" class="worker-list"></div>
+        </section>
+
+        <!-- Plan Review Modal -->
+        <div id="plan-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Plan Review</h2>
+                    <button class="close-btn" onclick="closePlanModal()">&times;</button>
+                </div>
+                <div id="plan-task-info"></div>
+                <div id="plan-content" class="plan-content"></div>
+                <div class="modal-actions">
+                    <button class="btn btn-success" onclick="approvePlan(true)">Approve</button>
+                    <button class="btn btn-danger" onclick="approvePlan(false)">Reject</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Log Viewer Modal -->
+        <div id="log-modal" class="modal hidden">
+            <div class="modal-content modal-wide">
+                <div class="modal-header">
+                    <h2>Worker Log: <span id="log-worker-name"></span></h2>
+                    <button class="close-btn" onclick="closeLogModal()">&times;</button>
+                </div>
+                <div id="log-output" class="log-output"></div>
+            </div>
+        </div>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

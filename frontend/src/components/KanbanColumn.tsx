@@ -9,6 +9,7 @@ const colorMap: Record<string, { badge: string; bg: string }> = {
   green:  { badge: 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300', bg: 'bg-green-50/50 dark:bg-green-950/30' },
   red:    { badge: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300', bg: 'bg-red-50/50 dark:bg-red-950/30' },
   amber:  { badge: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300', bg: 'bg-amber-50/50 dark:bg-amber-950/30' },
+  slate:  { badge: 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300', bg: 'bg-slate-50 dark:bg-slate-900/50' },
 }
 
 interface Props {
@@ -20,11 +21,35 @@ interface Props {
   onCancel: (taskId: string) => void
   onDelete: (taskId: string) => void
   onViewLog: (workerId: string) => void
+  onMerge: (taskId: string, squash: boolean) => void
+  compact?: boolean
 }
 
-export default function KanbanColumnComp({ column, tasks, lang, onClickTask, onRetry, onCancel, onDelete, onViewLog }: Props) {
+export default function KanbanColumnComp({ column, tasks, lang, onClickTask, onRetry, onCancel, onDelete, onViewLog, onMerge, compact }: Props) {
   const colors = colorMap[column.color] ?? colorMap.gray
   const label = lang === 'zh' ? column.label : column.labelEn
+
+  if (compact) {
+    // Mobile: render cards without column wrapper
+    return (
+      <>
+        {tasks.map(task => (
+          <TaskCard
+            key={task.id}
+            task={task}
+            columnKey={column.key}
+            lang={lang}
+            onClick={() => onClickTask(task)}
+            onRetry={() => onRetry(task.id)}
+            onCancel={() => onCancel(task.id)}
+            onDelete={() => onDelete(task.id)}
+            onViewLog={() => task.worker_id && onViewLog(task.worker_id)}
+            onMerge={(squash) => onMerge(task.id, squash)}
+          />
+        ))}
+      </>
+    )
+  }
 
   return (
     <div className={`min-w-[280px] w-[280px] flex-shrink-0 rounded-xl ${colors.bg} flex flex-col max-h-[calc(100vh-220px)]`}>
@@ -46,6 +71,7 @@ export default function KanbanColumnComp({ column, tasks, lang, onClickTask, onR
             onCancel={() => onCancel(task.id)}
             onDelete={() => onDelete(task.id)}
             onViewLog={() => task.worker_id && onViewLog(task.worker_id)}
+            onMerge={(squash) => onMerge(task.id, squash)}
           />
         ))}
       </div>

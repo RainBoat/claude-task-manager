@@ -81,6 +81,9 @@ def add_project(create: ProjectCreate) -> Project:
             name=create.name,
             repo_url=create.repo_url,
             branch=create.branch,
+            source_type=create.source_type,
+            auto_merge=create.auto_merge,
+            auto_push=create.auto_push,
         )
         registry.projects.append(project)
         _write_registry(registry)
@@ -133,6 +136,25 @@ def update_project_status(
                 p.status = status
                 if error is not None:
                     p.error = error
+                _write_registry(registry)
+                return p
+        return None
+
+
+def update_project_settings(
+    project_id: str,
+    auto_merge: Optional[bool] = None,
+    auto_push: Optional[bool] = None,
+) -> Optional[Project]:
+    lock = FileLock(REGISTRY_LOCK, timeout=10)
+    with lock:
+        registry = _read_registry()
+        for p in registry.projects:
+            if p.id == project_id:
+                if auto_merge is not None:
+                    p.auto_merge = auto_merge
+                if auto_push is not None:
+                    p.auto_push = auto_push
                 _write_registry(registry)
                 return p
         return None
@@ -193,7 +215,8 @@ def get_task(project_id: str, task_id: str) -> Optional[Task]:
 
 def recover_stale_tasks() -> int:
     """Reset tasks stuck in intermediate states (claimed/running/merging/testing)
-    back to pending. Called on startup to recover from unclean shutdowns."""
+    back to pending. Called on startup to recover from unclean shutdowns.
+    Note: merge_pending is a stable state (awaiting user action), not stale."""
     stale_statuses = {
         TaskStatus.CLAIMED, TaskStatus.RUNNING,
         TaskStatus.MERGING, TaskStatus.TESTING,

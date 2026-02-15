@@ -6,7 +6,10 @@ services:
     ports:
       - "${WEB_PORT:-8420}:${WEB_PORT:-8420}"
     volumes:
-      - dev-data:/app/data
+      - ./data:/app/data
+      # Mount local repos for local project mode:
+      # - /path/to/local/repo:/mnt/repos/my-repo
+      # - /home/user/projects:/mnt/repos
     deploy:
       resources:
         limits:
@@ -15,7 +18,3 @@ services:
     restart: unless-stopped
     stdin_open: true
     tty: true
-
-volumes:
-  dev-data:
-    driver: local

@@ -1,4 +1,4 @@
-import type { Task, TaskCreatePayload, Worker, Project, ProjectCreatePayload, GitCommit } from './types'
+import type { Task, TaskCreatePayload, Worker, Project, ProjectCreatePayload, ProjectSettingsPayload, GitCommit } from './types'
 
 const BASE = ''
 
@@ -90,6 +90,20 @@ export async function approvePlan(
   if (!res.ok) throw new Error('Failed to approve plan')
 }
 
+export async function batchApprovePlans(
+  projectId: string,
+  taskIds: string[],
+  approved: boolean,
+  feedback?: string,
+): Promise<void> {
+  const res = await fetch(`${BASE}/api/projects/${projectId}/plan/batch-approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_ids: taskIds, approved, feedback }),
+  })
+  if (!res.ok) throw new Error('Failed to batch approve plans')
+}
+
 // ============================================================
 // Workers (global)
 // ============================================================
@@ -109,6 +123,66 @@ export async function fetchGitLog(projectId: string, limit = 50): Promise<GitCom
   if (!res.ok) throw new Error('Failed to fetch git log')
   const data = await res.json()
   return data.commits
+}
+
+// ============================================================
+// Local repos discovery
+// ============================================================
+
+export interface LocalRepo {
+  name: string
+  path: string
+  branch: string
+}
+
+export async function fetchLocalRepos(): Promise<LocalRepo[]> {
+  const res = await fetch(`${BASE}/api/local-repos`)
+  if (!res.ok) throw new Error('Failed to fetch local repos')
+  return res.json()
+}
+
+// ============================================================
+// Project settings
+// ============================================================
+
+export async function updateProjectSettings(projectId: string, settings: ProjectSettingsPayload): Promise<Project> {
+  const res = await fetch(`${BASE}/api/projects/${projectId}/settings`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  })
+  if (!res.ok) throw new Error('Failed to update project settings')
+  return res.json()
+}
+
+// ============================================================
+// Merge / Push (project-scoped)
+// ============================================================
+
+export async function mergeTask(projectId: string, taskId: string, squash: boolean = false): Promise<void> {
+  const res = await fetch(`${BASE}/api/projects/${projectId}/tasks/${taskId}/merge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ squash }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.error || 'Failed to merge task')
+  }
+}
+
+export async function pushProject(projectId: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/projects/${projectId}/git/push`, { method: 'POST' })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.error || 'Failed to push')
+  }
+}
+
+export async function fetchUnpushed(projectId: string): Promise<{ count: number; has_remote: boolean }> {
+  const res = await fetch(`${BASE}/api/projects/${projectId}/git/unpushed`)
+  if (!res.ok) return { count: 0, has_remote: false }
+  return res.json()
 }
 
 // ============================================================

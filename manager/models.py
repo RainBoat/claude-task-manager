@@ -23,8 +23,11 @@ class ProjectStatus(str, Enum):
 class Project(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
     name: str
-    repo_url: str
+    repo_url: Optional[str] = None
     branch: str = "main"
+    source_type: str = "git"  # "git" | "local"
+    auto_merge: bool = True
+    auto_push: bool = False
     status: ProjectStatus = ProjectStatus.CLONING
     error: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
@@ -32,8 +35,11 @@ class Project(BaseModel):
 
 class ProjectCreate(BaseModel):
     name: str
-    repo_url: str
+    repo_url: Optional[str] = None
     branch: str = "main"
+    source_type: str = "git"
+    auto_merge: bool = True
+    auto_push: bool = False
 
 
 class ProjectRegistry(BaseModel):
@@ -52,6 +58,7 @@ class TaskStatus(str, Enum):
     PLAN_APPROVED = "plan_approved"    # plan approved, ready for execution
     MERGING = "merging"
     TESTING = "testing"
+    MERGE_PENDING = "merge_pending"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"

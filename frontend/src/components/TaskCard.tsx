@@ -22,15 +22,17 @@ interface Props {
   onCancel: () => void
   onDelete: () => void
   onViewLog: () => void
+  onMerge: (squash: boolean) => void
 }
 
-export default function TaskCard({ task, columnKey, lang, onClick, onRetry, onCancel, onDelete, onViewLog }: Props) {
+export default function TaskCard({ task, columnKey, lang, onClick, onRetry, onCancel, onDelete, onViewLog, onMerge }: Props) {
   const base = 'rounded-xl p-3 cursor-pointer transition-all hover:shadow-md border'
 
   const styleMap: Record<string, string> = {
     backlog:     'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700',
     in_progress: 'bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800',
     review:      'bg-purple-50 dark:bg-purple-950/40 border-purple-200 dark:border-purple-800',
+    merge:       'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800',
     done:        'bg-green-50 dark:bg-green-950/40 border-green-200 dark:border-green-800',
     failed:      'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800',
     cancelled:   'bg-gray-100 dark:bg-gray-800/60 border-gray-200 dark:border-gray-700 opacity-70',
@@ -117,6 +119,31 @@ export default function TaskCard({ task, columnKey, lang, onClick, onRetry, onCa
               className="text-[10px] px-2.5 py-1 rounded-lg bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-800"
             >
               🗑️ {t('card.delete', lang)}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {columnKey === 'merge' && (
+        <div className="mt-2">
+          {task.branch && (
+            <p className="text-[10px] font-mono text-gray-500 dark:text-gray-400 mb-2 truncate">{task.branch}</p>
+          )}
+          {task.commit_id && (
+            <p className="text-[10px] font-mono text-gray-400 dark:text-gray-500 mb-2">{task.commit_id.slice(0, 7)}</p>
+          )}
+          <div className="flex gap-1.5">
+            <button
+              onClick={e => { e.stopPropagation(); onMerge(true) }}
+              className="text-[10px] px-2.5 py-1 rounded-lg bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-800 font-medium"
+            >
+              Squash Merge
+            </button>
+            <button
+              onClick={e => { e.stopPropagation(); onMerge(false) }}
+              className="text-[10px] px-2.5 py-1 rounded-lg bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-800 font-medium"
+            >
+              Merge
             </button>
           </div>
         </div>

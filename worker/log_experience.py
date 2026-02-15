@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""Log task completion experience to PROGRESS.md in the main repo."""
+"""Log task completion experience to PROGRESS.md in the main repo.
+
+Generates structured experience entries (problem/solution/prevention)
+instead of raw log truncation, so future workers can learn from history.
+"""
 
 import argparse
+import json
 import os
 import subprocess
 from datetime import datetime
 
 
 def extract_summary_from_log(log_file: str) -> str:
-    """Extract a brief summary from the Claude Code stream-json log."""
+    """Extract assistant messages from the Claude Code stream-json log."""
     if not os.path.exists(log_file):
-        return "No log available"
+        return ""
 
     try:
-        import json
         messages = []
         with open(log_file, "r") as f:
             for line in f:
@@ -27,18 +31,99 @@ def extract_summary_from_log(log_file: str) -> str:
                         if isinstance(msg, dict):
                             for block in msg.get("content", []):
                                 if block.get("type") == "text":
-                                    text = block["text"][:200]
-                                    messages.append(text)
+                                    messages.append(block["text"])
                         elif isinstance(msg, str):
-                            messages.append(msg[:200])
+                            messages.append(msg)
                 except (json.JSONDecodeError, KeyError):
                     continue
 
-        if messages:
-            return messages[-1]  # Last assistant message as summary
-        return "Task completed (no summary extracted)"
-    except Exception as e:
-        return f"Log parse error: {e}"
+        # Return last few messages (most relevant), capped at 4000 chars
+        combined = "\n---\n".join(messages[-5:])
+        return combined[-4000:] if len(combined) > 4000 else combined
+    except Exception:
+        return ""
+
+
+def generate_structured_experience(
+    task_title: str, task_id: str, worker_id: str,
+    commit_id: str, log_summary: str, repo_dir: str,
+) -> str:
+    """Use Claude to generate a structured experience entry from the raw log."""
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+    # If no log summary, write a minimal entry
+    if not log_summary.strip():
+        return f"""
+## [{task_id}] {task_title}
+- **Worker**: {worker_id}
+- **Completed**: {timestamp}
+- **Commit**: `{commit_id[:12] if commit_id else 'N/A'}`
+- **Problem**: N/A
+- **Solution**: Task completed without notable issues.
+- **Prevention**: N/A
+
+"""
+
+    prompt = f"""Analyze this task completion log and generate a structured experience entry.
+
+Task: {task_title} (ID: {task_id})
+
+Worker log (last messages):
+{log_summary}
+
+Respond with ONLY a markdown block in this exact format (no extra text):
+
+- **Problem**: One sentence describing the main challenge or issue encountered (or "No significant issues" if straightforward)
+- **Solution**: One sentence describing how it was resolved
+- **Prevention**: One sentence on how to avoid this issue in future tasks (or "N/A" if no issues)
+- **Key files**: Comma-separated list of main files modified"""
+
+    try:
+        result = subprocess.run(
+            ["claude", "-p", prompt,
+             "--dangerously-skip-permissions",
+             "--output-format", "json"],
+            capture_output=True, text=True, timeout=60,
+            cwd=repo_dir,
+        )
+
+        reflection = ""
+        if result.returncode == 0:
+            try:
+                output = json.loads(result.stdout)
+                raw = output.get("result", "")
+                reflection = raw if isinstance(raw, str) else str(raw)
+            except (json.JSONDecodeError, TypeError):
+                reflection = result.stdout
+
+        if not reflection.strip():
+            reflection = (
+                "- **Problem**: N/A\n"
+                "- **Solution**: Task completed successfully.\n"
+                "- **Prevention**: N/A\n"
+                "- **Key files**: (see commit)"
+            )
+
+        return f"""
+## [{task_id}] {task_title}
+- **Worker**: {worker_id}
+- **Completed**: {timestamp}
+- **Commit**: `{commit_id[:12] if commit_id else 'N/A'}`
+{reflection}
+
+"""
+    except (subprocess.TimeoutExpired, Exception):
+        # Fallback to basic entry if Claude call fails
+        return f"""
+## [{task_id}] {task_title}
+- **Worker**: {worker_id}
+- **Completed**: {timestamp}
+- **Commit**: `{commit_id[:12] if commit_id else 'N/A'}`
+- **Problem**: (experience generation timed out)
+- **Solution**: Task completed — see commit for details.
+- **Prevention**: N/A
+
+"""
 
 
 def main():
@@ -52,20 +137,21 @@ def main():
     args = parser.parse_args()
 
     progress_file = os.path.join(args.repo_dir, "PROGRESS.md")
-    summary = "N/A"
+
+    # Extract raw log content
+    log_summary = ""
     if args.log_file:
-        summary = extract_summary_from_log(args.log_file)
+        log_summary = extract_summary_from_log(args.log_file)
 
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-
-    entry = f"""
-## [{args.task_id}] {args.task_title}
-- **Worker**: {args.worker_id}
-- **Completed**: {timestamp}
-- **Commit**: `{args.commit_id[:12] if args.commit_id else 'N/A'}`
-- **Summary**: {summary}
-
-"""
+    # Generate structured experience entry
+    entry = generate_structured_experience(
+        task_title=args.task_title,
+        task_id=args.task_id,
+        worker_id=args.worker_id,
+        commit_id=args.commit_id,
+        log_summary=log_summary,
+        repo_dir=args.repo_dir,
+    )
 
     # Append to PROGRESS.md
     with open(progress_file, "a") as f:

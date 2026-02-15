@@ -1,8 +1,11 @@
 export interface Project {
   id: string
   name: string
-  repo_url: string
+  repo_url: string | null
   branch: string
+  source_type: 'git' | 'local'
+  auto_merge: boolean
+  auto_push: boolean
   status: 'cloning' | 'ready' | 'error'
   error: string | null
   created_at: string
@@ -10,8 +13,16 @@ export interface Project {
 
 export interface ProjectCreatePayload {
   name: string
-  repo_url: string
+  repo_url?: string
   branch?: string
+  source_type?: 'git' | 'local'
+  auto_merge?: boolean
+  auto_push?: boolean
+}
+
+export interface ProjectSettingsPayload {
+  auto_merge?: boolean
+  auto_push?: boolean
 }
 
 export interface GitCommit {
@@ -52,6 +63,7 @@ export type TaskStatus =
   | 'plan_approved'
   | 'merging'
   | 'testing'
+  | 'merge_pending'
   | 'completed'
   | 'failed'
   | 'cancelled'

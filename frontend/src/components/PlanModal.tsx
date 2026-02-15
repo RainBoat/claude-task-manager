@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import type { Task } from '../types'
 import type { Lang } from '../i18n'
 import { t } from '../i18n'
+import { useVoiceInput } from '../hooks/useVoiceInput'
 
 interface Props {
   task: Task
@@ -35,6 +36,11 @@ export default function PlanModal({ task, lang, onApprove, onReject, onClose }: 
   })
   const [feedbackMode, setFeedbackMode] = useState(false)
   const [feedback, setFeedback] = useState('')
+
+  const handleFeedbackVoice = useCallback((text: string) => {
+    setFeedback(prev => prev ? prev + ' ' + text : text)
+  }, [])
+  const { listening: feedbackListening, startListening: startFeedbackVoice } = useVoiceInput(handleFeedbackVoice)
 
   const selectAnswer = (key: string, value: string) => {
     setAnswers(prev => ({ ...prev, [key]: value }))
@@ -103,13 +109,23 @@ export default function PlanModal({ task, lang, onApprove, onReject, onClose }: 
 
           {/* Feedback textarea */}
           {feedbackMode && (
-            <textarea
-              value={feedback}
-              onChange={e => setFeedback(e.target.value)}
-              placeholder="Enter your feedback..."
-              rows={4}
-              className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-3 text-sm outline-none focus:ring-2 focus:ring-purple-400"
-            />
+            <div className="relative">
+              <textarea
+                value={feedback}
+                onChange={e => setFeedback(e.target.value)}
+                placeholder="Enter your feedback..."
+                rows={4}
+                className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-3 pr-10 text-sm outline-none focus:ring-2 focus:ring-purple-400"
+              />
+              <button
+                type="button"
+                onClick={startFeedbackVoice}
+                className={`absolute right-2 top-2 p-1.5 rounded-lg transition-colors ${feedbackListening ? 'bg-red-100 dark:bg-red-900 text-red-500' : 'hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400'}`}
+                title="Voice input"
+              >
+                🎤
+              </button>
+            </div>
           )}
         </div>
 

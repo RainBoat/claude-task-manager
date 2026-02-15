@@ -2,6 +2,7 @@ import { useState, useRef, useCallback } from 'react'
 import type { Task, TaskCreatePayload } from '../types'
 import type { Lang } from '../i18n'
 import { t } from '../i18n'
+import { useVoiceInput } from '../hooks/useVoiceInput'
 
 interface Props {
   tasks: Task[]
@@ -15,6 +16,11 @@ export default function TaskInput({ tasks, lang, onSubmit }: Props) {
   const [dependsOn, setDependsOn] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const handleVoiceResult = useCallback((text: string) => {
+    setDescription(prev => prev ? prev + ' ' + text : text)
+  }, [])
+  const { listening, startListening: handleVoice } = useVoiceInput(handleVoiceResult)
 
   const dependableTasks = tasks.filter(t =>
     ['pending', 'claimed', 'running', 'plan_pending', 'plan_approved', 'merging', 'testing'].includes(t.status)
@@ -45,20 +51,6 @@ export default function TaskInput({ tasks, lang, onSubmit }: Props) {
     }
   }
 
-  // Voice input via Web Speech API
-  const handleVoice = useCallback(() => {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!SR) return alert('Speech recognition not supported')
-    const recognition = new SR()
-    recognition.lang = 'zh-CN'
-    recognition.interimResults = false
-    recognition.onresult = (e: any) => {
-      const text = e.results[0][0].transcript
-      setDescription(prev => prev ? prev + ' ' + text : text)
-    }
-    recognition.start()
-  }, [])
-
   return (
     <div className="px-4 sm:px-6 py-6">
       <div className="max-w-3xl mx-auto bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-4">
@@ -76,7 +68,7 @@ export default function TaskInput({ tasks, lang, onSubmit }: Props) {
             <button
               type="button"
               onClick={handleVoice}
-              className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-400"
+              className={`p-1.5 rounded-lg transition-colors ${listening ? 'bg-red-100 dark:bg-red-900 text-red-500' : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400'}`}
               title="Voice input"
             >
               🎤

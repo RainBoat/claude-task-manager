@@ -43,10 +43,15 @@ Include the task ID in the commit body: `Task-ID: <id>`
 - If you add new functionality, add corresponding tests.
 - If tests fail due to your changes, fix them before committing.
 
-## Experience Logging
+## Experience — Learn from History
 
-After completing your task, the system will automatically log your experience to PROGRESS.md.
-If you encounter notable issues or discover important patterns, mention them in your commit message body so they get captured.
+**Before starting your task**, check `PROGRESS.md` in the repo root. It contains structured experience entries from previous tasks — problems encountered, solutions applied, and lessons learned. Use this knowledge to avoid repeating past mistakes.
+
+If relevant entries exist for similar work (same files, same patterns), incorporate those lessons into your approach.
+
+After completing your task, the system will automatically log your experience to PROGRESS.md with structured fields (problem/solution/prevention) so future workers can benefit.
+
+If you encounter notable issues or discover important patterns, mention them in your commit message body so they get captured in the experience log.
 
 ## Architecture Notes
 

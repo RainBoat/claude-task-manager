@@ -86,7 +86,19 @@ while true; do
         grep -qxF 'CLAUDE.md' "$EXCLUDE_FILE" 2>/dev/null || echo 'CLAUDE.md' >> "$EXCLUDE_FILE"
     fi
 
-    # --- 4. Build prompt ---
+    # --- 4. Read PROGRESS.md for historical experience ---
+    EXPERIENCE=""
+    PROGRESS_FILE="${REPO_DIR}/PROGRESS.md"
+    if [ -f "$PROGRESS_FILE" ]; then
+        # Extract last 5 structured experience entries (each starts with "## [")
+        EXPERIENCE=$(awk '/^## \[/{count++; if(count>n) exit} count>0' n=5 RS='(^|\n)(?=## \\[)' "$PROGRESS_FILE" 2>/dev/null | tail -c 3000)
+        if [ -z "$EXPERIENCE" ]; then
+            # Fallback: grab last 2000 chars
+            EXPERIENCE=$(tail -c 2000 "$PROGRESS_FILE" 2>/dev/null)
+        fi
+    fi
+
+    # --- 5. Build prompt ---
     PROMPT="You are working on task: ${TASK_TITLE}
 
 Description: ${TASK_DESC}"
@@ -98,17 +110,25 @@ Approved Plan (follow this plan):
 ${TASK_PLAN}"
     fi
 
+    if [ -n "$EXPERIENCE" ]; then
+        PROMPT="${PROMPT}
+
+Historical Experience (learn from past tasks — avoid repeating mistakes):
+${EXPERIENCE}"
+    fi
+
     PROMPT="${PROMPT}
 
 Instructions:
-1. Implement the changes described above.
-2. Make sure all changes are correct and complete.
-3. Stage and commit your changes with a descriptive commit message.
-4. Do NOT push — the CI system will handle that."
+1. Review the historical experience above (if any) for relevant lessons before starting.
+2. Implement the changes described above.
+3. Make sure all changes are correct and complete.
+4. Stage and commit your changes with a descriptive commit message.
+5. Do NOT push — the CI system will handle that."
 
     echo "[${WORKER_ID}] Running Claude Code in ${WORKTREE_DIR}..."
 
-    # --- 5. Run Claude Code ---
+    # --- 6. Run Claude Code ---
     cd "$WORKTREE_DIR"
     : > "$LOG_FILE"  # truncate log file
 
@@ -172,43 +192,72 @@ Instructions:
         continue
     fi
 
-    # --- 8. Merge to main and push ---
+    # --- 8. Check project merge settings ---
+    SETTINGS_JSON=$(python3 "$CLAIM_SCRIPT" get-settings "$PROJECT_ID" 2>/dev/null) || true
+    AUTO_MERGE=$(echo "$SETTINGS_JSON" | jq -r '.auto_merge // true')
+    AUTO_PUSH=$(echo "$SETTINGS_JSON" | jq -r '.auto_push // false')
+
     FINAL_COMMIT=$(git -C "$WORKTREE_DIR" rev-parse HEAD)
     HAS_REMOTE=$(git -C "$WORKTREE_DIR" remote 2>/dev/null)
 
-    # Remove untracked CLAUDE.md from main repo to prevent merge conflicts
-    rm -f "${REPO_DIR}/CLAUDE.md"
+    if [ "$AUTO_MERGE" = "true" ]; then
+        # Auto merge mode: merge to main
+        # Remove untracked CLAUDE.md from main repo to prevent merge conflicts
+        rm -f "${REPO_DIR}/CLAUDE.md"
 
-    git -C "$REPO_DIR" merge "$BRANCH_NAME" --no-edit 2>/dev/null
-    if [ $? -ne 0 ]; then
-        echo "[${WORKER_ID}] Merge to main failed for task ${TASK_ID}, attempting auto-resolve..."
-        git -C "$REPO_DIR" merge --abort 2>/dev/null || true
-    fi
-
-    if [ -n "$HAS_REMOTE" ]; then
-        git -C "$REPO_DIR" push origin "${BRANCH_BASE}" 2>/dev/null
+        git -C "$REPO_DIR" merge "$BRANCH_NAME" --no-edit 2>/dev/null
         if [ $? -ne 0 ]; then
-            echo "[${WORKER_ID}] Push failed for task ${TASK_ID} (non-fatal)"
+            echo "[${WORKER_ID}] Merge to main failed for task ${TASK_ID}, attempting auto-resolve..."
+            git -C "$REPO_DIR" merge --abort 2>/dev/null || true
+        fi
+
+        # Push only if auto_push is enabled
+        if [ "$AUTO_PUSH" = "true" ] && [ -n "$HAS_REMOTE" ]; then
+            git -C "$REPO_DIR" push origin "${BRANCH_BASE}" 2>/dev/null
+            if [ $? -ne 0 ]; then
+                echo "[${WORKER_ID}] Push failed for task ${TASK_ID} (non-fatal)"
+            fi
+        elif [ -z "$HAS_REMOTE" ]; then
+            echo "[${WORKER_ID}] No remote configured, skipping push"
+        else
+            echo "[${WORKER_ID}] Auto-push disabled, skipping push"
+        fi
+
+        echo "[${WORKER_ID}] Task ${TASK_ID} completed. Commit: ${FINAL_COMMIT}"
+        python3 "$CLAIM_SCRIPT" update "$PROJECT_ID" "$TASK_ID" "completed" --commit "$FINAL_COMMIT"
+
+        # --- 9. Log experience ---
+        python3 "$LOG_SCRIPT" \
+            --repo-dir "$REPO_DIR" \
+            --task-id "$TASK_ID" \
+            --task-title "$TASK_TITLE" \
+            --worker-id "$WORKER_ID" \
+            --commit-id "$FINAL_COMMIT" \
+            --log-file "$LOG_FILE" 2>/dev/null || true
+
+        # --- 10. Cleanup worktree and branch ---
+        git -C "$REPO_DIR" worktree remove --force "$WORKTREE_DIR" 2>/dev/null || true
+        git -C "$REPO_DIR" branch -D "$BRANCH_NAME" 2>/dev/null || true
+        if [ -n "$HAS_REMOTE" ]; then
+            git -C "$REPO_DIR" push origin --delete "$BRANCH_NAME" 2>/dev/null || true
         fi
     else
-        echo "[${WORKER_ID}] No remote configured, skipping push"
+        # Manual merge mode: keep branch alive, mark as merge_pending
+        echo "[${WORKER_ID}] Task ${TASK_ID} ready for manual merge. Branch: ${BRANCH_NAME}"
+        python3 "$CLAIM_SCRIPT" update "$PROJECT_ID" "$TASK_ID" "merge_pending" --commit "$FINAL_COMMIT"
+
+        # --- 9. Log experience ---
+        python3 "$LOG_SCRIPT" \
+            --repo-dir "$REPO_DIR" \
+            --task-id "$TASK_ID" \
+            --task-title "$TASK_TITLE" \
+            --worker-id "$WORKER_ID" \
+            --commit-id "$FINAL_COMMIT" \
+            --log-file "$LOG_FILE" 2>/dev/null || true
+
+        # Cleanup worktree only (keep branch for manual merge)
+        git -C "$REPO_DIR" worktree remove --force "$WORKTREE_DIR" 2>/dev/null || true
     fi
-
-    echo "[${WORKER_ID}] Task ${TASK_ID} completed. Commit: ${FINAL_COMMIT}"
-    python3 "$CLAIM_SCRIPT" update "$PROJECT_ID" "$TASK_ID" "completed" --commit "$FINAL_COMMIT"
-
-    # --- 9. Log experience ---
-    python3 "$LOG_SCRIPT" \
-        --repo-dir "$REPO_DIR" \
-        --task-id "$TASK_ID" \
-        --task-title "$TASK_TITLE" \
-        --worker-id "$WORKER_ID" \
-        --commit-id "$FINAL_COMMIT" \
-        --log-file "$LOG_FILE" 2>/dev/null || true
-
-    # --- 10. Cleanup worktree ---
-    git -C "$REPO_DIR" worktree remove --force "$WORKTREE_DIR" 2>/dev/null || true
-    git -C "$REPO_DIR" branch -D "$BRANCH_NAME" 2>/dev/null || true
 
     echo "[${WORKER_ID}] Cleanup done. Looping..."
 done

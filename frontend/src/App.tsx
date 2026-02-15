@@ -6,6 +6,7 @@ import AddProjectModal from './components/AddProjectModal'
 import TaskInput from './components/TaskInput'
 import KanbanBoard from './components/KanbanBoard'
 import PlanModal from './components/PlanModal'
+import BatchPlanReview from './components/BatchPlanReview'
 import LogModal from './components/LogModal'
 import WorkerStatusBar from './components/WorkerStatusBar'
 import { useProjects } from './hooks/useProjects'
@@ -13,9 +14,11 @@ import { useTasks } from './hooks/useTasks'
 import { useWorkers } from './hooks/useWorkers'
 import { useGitLog } from './hooks/useGitLog'
 import { useTheme } from './hooks/useTheme'
+import { useStats } from './hooks/useStats'
 import {
   createProject, deleteProject as apiDeleteProject,
-  createTask, deleteTask, cancelTask, retryTask, approvePlan,
+  createTask, deleteTask, cancelTask, retryTask, approvePlan, batchApprovePlans,
+  mergeTask,
 } from './api'
 import type { Task, TaskCreatePayload } from './types'
 import type { Lang } from './i18n'
@@ -29,6 +32,7 @@ export default function App() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [showAddProject, setShowAddProject] = useState(false)
   const [showGitPanel, setShowGitPanel] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   // Auto-select first project
   useEffect(() => {
@@ -45,16 +49,20 @@ export default function App() {
   const { tasks, refresh: refreshTasks } = useTasks(activeProjectId, 5000)
   const { commits } = useGitLog(showGitPanel ? activeProjectId : null, 10000)
   const workers = useWorkers(5000)
+  const stats = useStats(activeProjectId, 10000)
 
   // Modal state
   const [planTask, setPlanTask] = useState<Task | null>(null)
   const [logWorkerId, setLogWorkerId] = useState<string | null>(null)
+  const [showBatchReview, setShowBatchReview] = useState(false)
+
+  const planPendingTasks = tasks.filter(t => t.status === 'plan_pending')
 
   const toggleLang = useCallback(() => setLang(l => l === 'zh' ? 'en' : 'zh'), [])
 
   // Project handlers
-  const handleAddProject = useCallback(async (name: string, repoUrl: string, branch: string) => {
-    await createProject({ name, repo_url: repoUrl, branch })
+  const handleAddProject = useCallback(async (name: string, repoUrl: string, branch: string, sourceType: 'git' | 'local' = 'git') => {
+    await createProject({ name, repo_url: repoUrl, branch, source_type: sourceType })
     await refreshProjects()
   }, [refreshProjects])
 
@@ -99,6 +107,16 @@ export default function App() {
     setLogWorkerId(workerId)
   }, [])
 
+  const handleMerge = useCallback(async (taskId: string, squash: boolean) => {
+    if (!activeProjectId) return
+    try {
+      await mergeTask(activeProjectId, taskId, squash)
+      await refreshTasks()
+    } catch (e: any) {
+      alert(e.message || 'Merge failed')
+    }
+  }, [activeProjectId, refreshTasks])
+
   const handleApprovePlan = useCallback(async (answers: Record<string, string>) => {
     if (!planTask || !activeProjectId) return
     await approvePlan(activeProjectId, planTask.id, true, undefined, answers)
@@ -113,6 +131,26 @@ export default function App() {
     await refreshTasks()
   }, [planTask, activeProjectId, refreshTasks])
 
+  // Batch plan handlers
+  const handleBatchApproveSingle = useCallback(async (taskId: string) => {
+    if (!activeProjectId) return
+    await approvePlan(activeProjectId, taskId, true)
+    await refreshTasks()
+  }, [activeProjectId, refreshTasks])
+
+  const handleBatchRejectSingle = useCallback(async (taskId: string, feedback: string) => {
+    if (!activeProjectId) return
+    await approvePlan(activeProjectId, taskId, false, feedback)
+    await refreshTasks()
+  }, [activeProjectId, refreshTasks])
+
+  const handleApproveAll = useCallback(async () => {
+    if (!activeProjectId || planPendingTasks.length === 0) return
+    await batchApprovePlans(activeProjectId, planPendingTasks.map(t => t.id), true)
+    setShowBatchReview(false)
+    await refreshTasks()
+  }, [activeProjectId, planPendingTasks, refreshTasks])
+
   return (
     <div className="h-screen flex flex-col">
       {/* Header — full width */}
@@ -121,6 +159,7 @@ export default function App() {
         dark={dark}
         lang={lang}
         showGitPanel={showGitPanel}
+        stats={stats}
         onToggleTheme={toggleTheme}
         onToggleLang={toggleLang}
         onToggleGitPanel={() => setShowGitPanel(v => !v)}
@@ -133,9 +172,12 @@ export default function App() {
           projects={projects}
           activeProjectId={activeProjectId}
           lang={lang}
+          open={sidebarOpen}
+          onToggle={() => setSidebarOpen(v => !v)}
           onSelect={setActiveProjectId}
           onAdd={() => setShowAddProject(true)}
           onDelete={handleDeleteProject}
+          onProjectUpdated={refreshProjects}
         />
 
         {/* Main content */}
@@ -147,6 +189,19 @@ export default function App() {
                 lang={lang}
                 onSubmit={handleCreateTask}
               />
+              {/* Batch review entry point */}
+              {planPendingTasks.length > 1 && (
+                <div className="px-4 sm:px-6 -mt-2 mb-2">
+                  <button
+                    onClick={() => setShowBatchReview(true)}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-800 transition-colors"
+                  >
+                    {lang === 'zh'
+                      ? `批量审批 ${planPendingTasks.length} 个 Plan`
+                      : `Batch Review ${planPendingTasks.length} Plans`}
+                  </button>
+                </div>
+              )}
               <KanbanBoard
                 tasks={tasks}
                 lang={lang}
@@ -155,6 +210,7 @@ export default function App() {
                 onCancel={handleCancel}
                 onDelete={handleDelete}
                 onViewLog={handleViewLog}
+                onMerge={handleMerge}
               />
             </>
           ) : (
@@ -195,6 +251,18 @@ export default function App() {
           onApprove={handleApprovePlan}
           onReject={handleRejectPlan}
           onClose={() => setPlanTask(null)}
+        />
+      )}
+
+      {showBatchReview && (
+        <BatchPlanReview
+          tasks={planPendingTasks}
+          lang={lang}
+          onApprove={handleBatchApproveSingle}
+          onReject={handleBatchRejectSingle}
+          onApproveAll={handleApproveAll}
+          onOpenDetail={(task) => { setShowBatchReview(false); setPlanTask(task) }}
+          onClose={() => setShowBatchReview(false)}
         />
       )}
 

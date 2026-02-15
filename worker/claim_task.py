@@ -14,7 +14,7 @@ import sys
 # Add manager to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "manager"))
 
-from dispatcher import claim_next, update_task_status
+from dispatcher import claim_next, update_task_status, get_project
 from models import TaskStatus
 
 
@@ -34,6 +34,10 @@ def main():
     update_p.add_argument("--error", default=None)
     update_p.add_argument("--commit", default=None)
     update_p.add_argument("--branch", default=None)
+
+    # get-settings — return project merge/push settings
+    settings_p = sub.add_parser("get-settings", help="Get project settings")
+    settings_p.add_argument("project_id", help="Project ID")
 
     args = parser.parse_args()
 
@@ -63,6 +67,19 @@ def main():
             sys.exit(0)
         else:
             print(f"Task {args.task_id} not found in project {args.project_id}", file=sys.stderr)
+            sys.exit(1)
+
+    elif args.command == "get-settings":
+        project = get_project(args.project_id)
+        if project:
+            print(json.dumps({
+                "auto_merge": project.auto_merge,
+                "auto_push": project.auto_push,
+                "source_type": project.source_type,
+            }))
+            sys.exit(0)
+        else:
+            print(f"Project {args.project_id} not found", file=sys.stderr)
             sys.exit(1)
 
 

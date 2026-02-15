@@ -49,6 +49,16 @@ const zh: Record<string, string> = {
   'project.confirm': '添加',
   'project.name_placeholder': 'my-project',
   'project.url_placeholder': 'https://github.com/org/repo.git',
+  // Workers
+  'workers.title': 'Workers',
+  'workers.idle': '空闲',
+  'workers.busy': '工作中',
+  'workers.stopped': '已停止',
+  'workers.error': '错误',
+  'workers.tasks_done': '已完成',
+  'workers.no_activity': '暂无活动',
+  'workers.view_full_log': '查看完整日志',
+  'workers.activity': '实时活动',
 }
 
 const en: Record<string, string> = {
@@ -102,6 +112,16 @@ const en: Record<string, string> = {
   'project.confirm': 'Add',
   'project.name_placeholder': 'my-project',
   'project.url_placeholder': 'https://github.com/org/repo.git',
+  // Workers
+  'workers.title': 'Workers',
+  'workers.idle': 'Idle',
+  'workers.busy': 'Busy',
+  'workers.stopped': 'Stopped',
+  'workers.error': 'Error',
+  'workers.tasks_done': 'Done',
+  'workers.no_activity': 'No activity yet',
+  'workers.view_full_log': 'View Full Log',
+  'workers.activity': 'Live Activity',
 }
 
 const langs = { zh, en } as const

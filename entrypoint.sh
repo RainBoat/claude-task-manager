@@ -88,9 +88,12 @@ if [ ! -f "$REGISTRY_FILE" ]; then
             echo "WARNING: Failed to clone repo."
         fi
 
-        # Inject CLAUDE.md
+        # Inject CLAUDE.md (excluded from git)
         if [ "$STATUS" = "ready" ] && [ ! -f "${FIRST_DIR}/repo/CLAUDE.md" ] && [ -f "/app/claude-md-template.md" ]; then
             cp /app/claude-md-template.md "${FIRST_DIR}/repo/CLAUDE.md"
+            EXCLUDE_FILE="${FIRST_DIR}/repo/.git/info/exclude"
+            mkdir -p "$(dirname "$EXCLUDE_FILE")" 2>/dev/null || true
+            grep -qxF 'CLAUDE.md' "$EXCLUDE_FILE" 2>/dev/null || echo 'CLAUDE.md' >> "$EXCLUDE_FILE"
         fi
 
         # Initialize PROGRESS.md
@@ -160,9 +163,12 @@ except Exception:
             git clone --branch "$branch" "$repo_url" "$repo_dir" 2>/dev/null || true
         fi
 
-        # Inject CLAUDE.md if missing
+        # Inject CLAUDE.md if missing (excluded from git)
         if [ -d "$repo_dir/.git" ] && [ ! -f "$repo_dir/CLAUDE.md" ] && [ -f "/app/claude-md-template.md" ]; then
             cp /app/claude-md-template.md "$repo_dir/CLAUDE.md"
+            EXCLUDE_FILE="$repo_dir/.git/info/exclude"
+            mkdir -p "$(dirname "$EXCLUDE_FILE")" 2>/dev/null || true
+            grep -qxF 'CLAUDE.md' "$EXCLUDE_FILE" 2>/dev/null || echo 'CLAUDE.md' >> "$EXCLUDE_FILE"
         fi
 
         # Initialize PROGRESS.md if missing
@@ -191,6 +197,15 @@ cd /app
 # --- Wait for manager to be ready ---
 sleep 2
 echo "Web Manager PID: $MANAGER_PID"
+
+# --- Recover stale tasks from previous unclean shutdown ---
+echo "Recovering stale tasks..."
+RECOVERED=$(python3 -c "
+import sys; sys.path.insert(0, '/app/manager')
+from dispatcher import recover_stale_tasks
+print(recover_stale_tasks())
+" 2>/dev/null || echo "0")
+echo "Recovered ${RECOVERED} stale task(s)"
 
 # --- Start Workers ---
 WORKER_COUNT="${WORKER_COUNT:-3}"

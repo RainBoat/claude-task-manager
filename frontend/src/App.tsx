@@ -7,6 +7,7 @@ import TaskInput from './components/TaskInput'
 import KanbanBoard from './components/KanbanBoard'
 import PlanModal from './components/PlanModal'
 import LogModal from './components/LogModal'
+import WorkerStatusBar from './components/WorkerStatusBar'
 import { useProjects } from './hooks/useProjects'
 import { useTasks } from './hooks/useTasks'
 import { useWorkers } from './hooks/useWorkers'
@@ -43,7 +44,7 @@ export default function App() {
   // Tasks & git for active project
   const { tasks, refresh: refreshTasks } = useTasks(activeProjectId, 5000)
   const { commits } = useGitLog(showGitPanel ? activeProjectId : null, 10000)
-  useWorkers(5000)
+  const workers = useWorkers(5000)
 
   // Modal state
   const [planTask, setPlanTask] = useState<Task | null>(null)
@@ -174,6 +175,9 @@ export default function App() {
           />
         )}
       </div>
+
+      {/* Worker Status Bar */}
+      <WorkerStatusBar workers={workers} lang={lang} onViewFullLog={handleViewLog} />
 
       {/* Modals */}
       {showAddProject && (

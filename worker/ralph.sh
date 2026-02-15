@@ -76,9 +76,14 @@ while true; do
     # Update task status
     python3 "$CLAIM_SCRIPT" update "$PROJECT_ID" "$TASK_ID" "running" --branch "$BRANCH_NAME" 2>/dev/null
 
-    # --- 3. Inject CLAUDE.md ---
+    # --- 3. Inject CLAUDE.md (excluded from git so it won't be committed) ---
     if [ -f "/app/claude-md-template.md" ]; then
         cp /app/claude-md-template.md "${WORKTREE_DIR}/CLAUDE.md"
+        # Exclude from git tracking via local exclude (not .gitignore, which would be committed)
+        mkdir -p "${WORKTREE_DIR}/.git" 2>/dev/null || true
+        EXCLUDE_FILE=$(git -C "$WORKTREE_DIR" rev-parse --git-dir 2>/dev/null)/info/exclude
+        mkdir -p "$(dirname "$EXCLUDE_FILE")" 2>/dev/null || true
+        grep -qxF 'CLAUDE.md' "$EXCLUDE_FILE" 2>/dev/null || echo 'CLAUDE.md' >> "$EXCLUDE_FILE"
     fi
 
     # --- 4. Build prompt ---
@@ -170,6 +175,9 @@ Instructions:
     # --- 8. Merge to main and push ---
     FINAL_COMMIT=$(git -C "$WORKTREE_DIR" rev-parse HEAD)
     HAS_REMOTE=$(git -C "$WORKTREE_DIR" remote 2>/dev/null)
+
+    # Remove untracked CLAUDE.md from main repo to prevent merge conflicts
+    rm -f "${REPO_DIR}/CLAUDE.md"
 
     git -C "$REPO_DIR" merge "$BRANCH_NAME" --no-edit 2>/dev/null
     if [ $? -ne 0 ]; then

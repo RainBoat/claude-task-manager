@@ -191,6 +191,39 @@ def get_task(project_id: str, task_id: str) -> Optional[Task]:
         return None
 
 
+def recover_stale_tasks() -> int:
+    """Reset tasks stuck in intermediate states (claimed/running/merging/testing)
+    back to pending. Called on startup to recover from unclean shutdowns."""
+    stale_statuses = {
+        TaskStatus.CLAIMED, TaskStatus.RUNNING,
+        TaskStatus.MERGING, TaskStatus.TESTING,
+    }
+    lock = FileLock(REGISTRY_LOCK, timeout=10)
+    with lock:
+        registry = _read_registry()
+
+    recovered = 0
+    for project in registry.projects:
+        tasks_file, lock_file = _get_paths(project.id)
+        plock = FileLock(lock_file, timeout=5)
+        try:
+            with plock:
+                queue = _read_queue(tasks_file)
+                changed = False
+                for task in queue.tasks:
+                    if task.status in stale_statuses:
+                        task.status = TaskStatus.PENDING
+                        task.worker_id = None
+                        task.error = None
+                        changed = True
+                        recovered += 1
+                if changed:
+                    _write_queue(tasks_file, queue)
+        except Exception:
+            continue
+    return recovered
+
+
 def claim_next(worker_id: str) -> Optional[tuple[str, Task]]:
     """Cross-project claim: scan all projects, return (project_id, task).
 

@@ -144,7 +144,7 @@ def _do_auto_merge(
 
     r = _run_git(["git", "merge", branch_name, "--no-edit"], cwd=repo_dir)
     if r.returncode != 0:
-        logger.warning(f"[{worker_id}] Merge to main failed: {r.stderr[:200]}")
+        logger.warning(f"[{worker_id}] Merge to main failed (exit {r.returncode}): stdout={r.stdout[:200]} stderr={r.stderr[:200]}")
         _run_git(["git", "merge", "--abort"], cwd=repo_dir)
         return None
 
@@ -319,30 +319,38 @@ async def _handle_task(worker_id: str, project_id: str, task) -> None:
             final_commit = await loop.run_in_executor(
                 None, _do_auto_merge, repo_dir, branch_name, branch_base, project.auto_push, worker_id
             )
-            if not final_commit:
-                # Merge to main failed — still mark completed with worktree commit
+            if final_commit:
+                # Merge succeeded — mark completed, cleanup branch
+                dispatcher.update_task_status(
+                    project_id, task.id, TaskStatus.COMPLETED, commit_id=final_commit
+                )
+                event_log.emit(worker_id, f"Task completed: {task.title}")
+                await loop.run_in_executor(
+                    None, _log_experience, repo_dir, task.id, task.title, worker_id, final_commit, log_file
+                )
+                event_log.emit(worker_id, f"Cleaning up worktree")
+                await loop.run_in_executor(None, _cleanup_worktree, repo_dir, worktree_dir, branch_name, True)
+
+                # Delete remote branch if auto_push
+                if project.auto_push:
+                    await loop.run_in_executor(
+                        None, lambda: _run_git(["git", "push", "origin", "--delete", branch_name], cwd=repo_dir)
+                    )
+            else:
+                # Merge to main failed — keep branch, mark merge_pending for manual merge
                 commit_r = await loop.run_in_executor(
                     None, lambda: _run_git(["git", "rev-parse", "HEAD"], cwd=worktree_dir)
                 )
                 final_commit = commit_r.stdout.strip() if commit_r.returncode == 0 else "unknown"
-
-            dispatcher.update_task_status(
-                project_id, task.id, TaskStatus.COMPLETED, commit_id=final_commit
-            )
-            event_log.emit(worker_id, f"Task completed: {task.title}")
-            await loop.run_in_executor(
-                None, _log_experience, repo_dir, task.id, task.title, worker_id, final_commit, log_file
-            )
-
-            # Cleanup worktree and branch
-            event_log.emit(worker_id, f"Cleaning up worktree")
-            await loop.run_in_executor(None, _cleanup_worktree, repo_dir, worktree_dir, branch_name, True)
-
-            # Delete remote branch if auto_push
-            if project.auto_push:
-                await loop.run_in_executor(
-                    None, lambda: _run_git(["git", "push", "origin", "--delete", branch_name], cwd=repo_dir)
+                dispatcher.update_task_status(
+                    project_id, task.id, TaskStatus.MERGE_PENDING, commit_id=final_commit
                 )
+                event_log.emit(worker_id, f"Auto-merge failed, kept branch {branch_name} for manual merge")
+                await loop.run_in_executor(
+                    None, _log_experience, repo_dir, task.id, task.title, worker_id, final_commit, log_file
+                )
+                # Cleanup worktree but keep branch so commits are not lost
+                await loop.run_in_executor(None, _cleanup_worktree, repo_dir, worktree_dir, branch_name, False)
         else:
             # Manual merge mode
             commit_r = await loop.run_in_executor(
@@ -354,12 +362,12 @@ async def _handle_task(worker_id: str, project_id: str, task) -> None:
                 project_id, task.id, TaskStatus.MERGE_PENDING, commit_id=final_commit
             )
             event_log.emit(worker_id, f"Task ready for merge: {task.title}")
-        await loop.run_in_executor(
-            None, _log_experience, repo_dir, task.id, task.title, worker_id, final_commit, log_file
-        )
+            await loop.run_in_executor(
+                None, _log_experience, repo_dir, task.id, task.title, worker_id, final_commit, log_file
+            )
 
-        # Cleanup worktree only (keep branch for manual merge)
-        await loop.run_in_executor(None, _cleanup_worktree, repo_dir, worktree_dir, branch_name, False)
+            # Cleanup worktree only (keep branch for manual merge)
+            await loop.run_in_executor(None, _cleanup_worktree, repo_dir, worktree_dir, branch_name, False)
 
     pool.mark_idle(worker_id)
     logger.info(f"[{worker_id}] Task {task.id} lifecycle complete. Commit: {final_commit}")

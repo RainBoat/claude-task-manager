@@ -4,8 +4,9 @@ set -euo pipefail
 # This script runs as root to fix volume permissions,
 # then drops to the 'claude' user for the actual entrypoint.
 
-# Fix ownership of the mounted data volume
-chown -R claude:claude /app/data
+# Fix ownership of the mounted data volume (ignore errors from
+# files created by worker containers with different ownership)
+chown -R claude:claude /app/data 2>/dev/null || true
 
 # Grant claude user access to Docker socket (for container mode)
 if [ -S /var/run/docker.sock ]; then

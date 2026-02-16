@@ -84,6 +84,7 @@ class ContainerPool:
         # Build host paths for volume mounts
         host_worktree = self._host_path(worktree_path)
         host_logs = self._host_path(log_dir)
+        host_repo = self._host_path(repo_path)
 
         container_name = f"claude-worker-{worker_id}-{task.id}"
 
@@ -107,9 +108,13 @@ class ContainerPool:
                 env[key] = val
 
         # Volume mounts
+        # Worktree's .git file contains a gitdir path pointing to the repo's
+        # .git/worktrees/ directory, so we must mount the repo at the same
+        # path so git can resolve the worktree link.
         volumes = {
             host_worktree: {"bind": "/workspace", "mode": "rw"},
             host_logs: {"bind": "/logs", "mode": "rw"},
+            host_repo: {"bind": repo_path, "mode": "rw"},
         }
 
         try:
@@ -127,7 +132,8 @@ class ContainerPool:
                 volumes=volumes,
                 detach=True,
                 auto_remove=True,
-                user="claude",
+                # No user= here — entrypoint runs as root to protect .git,
+                # then drops to claude via gosu
             )
 
             self._container_ids[worker_id] = container.id

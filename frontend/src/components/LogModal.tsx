@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { X, Wifi, WifiOff } from 'lucide-react'
 import { createLogSocket } from '../api'
 import type { Lang } from '../i18n'
 import { t } from '../i18n'
+import type { FeedEntry } from '../hooks/useWorkerLogs'
+import LogEntryRow from './LogEntryRow'
 
 interface Props {
   workerId: string
@@ -10,29 +12,28 @@ interface Props {
   onClose: () => void
 }
 
-interface LogEntry {
-  type: string
-  timestamp?: string
-  message?: string
-  text?: string
-  tool?: string
-  error?: string
-  [key: string]: any
-}
-
-const typeColor: Record<string, string> = {
-  error: 'text-red-500 dark:text-red-400',
-  tool_use: 'text-accent',
-  tool_result: 'text-txt-muted',
-  assistant: 'text-txt-secondary',
-  system: 'text-amber-500 dark:text-amber-400',
+function hasContent(entry: FeedEntry): boolean {
+  if (entry.type === 'assistant') return !!entry.text?.trim()
+  if (entry.type === 'tool_use') return !!entry.tool
+  if (entry.type === 'error') return !!(entry.error || entry.text)
+  if (entry.type === 'result') return true
+  if (entry.type === 'system') return !!entry.text?.trim()
+  return !!(entry.text || entry.message)
 }
 
 export default function LogModal({ workerId, lang, onClose }: Props) {
-  const [entries, setEntries] = useState<LogEntry[]>([])
+  const [entries, setEntries] = useState<FeedEntry[]>([])
   const [connected, setConnected] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const isNearBottom = useRef(true)
+
+  const checkNearBottom = useCallback(() => {
+    const el = containerRef.current
+    if (!el) return
+    isNearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+  }, [])
 
   useEffect(() => {
     const ws = createLogSocket(workerId)
@@ -44,7 +45,23 @@ export default function LogModal({ workerId, lang, onClose }: Props) {
     ws.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data)
-        setEntries(prev => [...prev, data])
+        const entry: FeedEntry = {
+          workerId,
+          workerIndex: 0,
+          type: data.type,
+          timestamp: data.timestamp,
+          message: data.message ?? data.text,
+          text: data.text,
+          tool: data.tool,
+          input: data.input,
+          inputRaw: data.input_raw,
+          error: data.error,
+          cost: data.cost,
+          duration: data.duration,
+          turns: data.turns,
+        }
+        if (!hasContent(entry)) return
+        setEntries(prev => [...prev, entry])
       } catch { /* ignore */ }
     }
 
@@ -52,19 +69,10 @@ export default function LogModal({ workerId, lang, onClose }: Props) {
   }, [workerId])
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (isNearBottom.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
   }, [entries])
-
-  const formatEntry = (entry: LogEntry): string => {
-    const ts = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : ''
-    const msg = entry.message ?? entry.text ?? ''
-    if (entry.type === 'assistant' && msg) return `${ts}  ${msg}`
-    if (entry.type === 'tool_use') return `${ts}  → ${entry.tool ?? ''}: ${msg}`
-    if (entry.type === 'tool_result') return `${ts}  ← ${msg.slice(0, 300)}`
-    if (entry.type === 'error') return `${ts}  ✗ ${entry.error ?? msg}`
-    if (entry.type === 'system') return `${ts}  ⚙ ${msg}`
-    return `${ts}  [${entry.type}] ${msg || JSON.stringify(entry).slice(0, 200)}`
-  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
@@ -88,14 +96,16 @@ export default function LogModal({ workerId, lang, onClose }: Props) {
         </div>
 
         {/* Log content */}
-        <div className="flex-1 overflow-y-auto p-4 log-terminal text-[11px] text-txt-secondary space-y-px">
+        <div
+          ref={containerRef}
+          onScroll={checkNearBottom}
+          className="flex-1 overflow-y-auto p-4 log-terminal font-mono text-[11px] space-y-px"
+        >
           {entries.length === 0 && (
             <p className="text-txt-muted text-center py-8 text-xs">Waiting for log entries...</p>
           )}
           {entries.map((entry, i) => (
-            <div key={i} className={`leading-relaxed font-mono ${typeColor[entry.type] ?? 'text-txt-muted'}`}>
-              {formatEntry(entry)}
-            </div>
+            <LogEntryRow key={i} entry={entry} />
           ))}
           <div ref={bottomRef} />
         </div>

@@ -8,11 +8,26 @@ export interface FeedEntry {
   type: string
   timestamp?: string
   message?: string
+  text?: string
   tool?: string
+  input?: string
+  inputRaw?: string
   error?: string
+  cost?: number
+  duration?: number
+  turns?: number
 }
 
-const MAX_ENTRIES = 100
+function hasContent(entry: FeedEntry): boolean {
+  if (entry.type === 'assistant') return !!entry.text?.trim()
+  if (entry.type === 'tool_use') return !!entry.tool
+  if (entry.type === 'error') return !!(entry.error || entry.text)
+  if (entry.type === 'result') return true
+  if (entry.type === 'system') return !!entry.text?.trim()
+  return !!(entry.text || entry.message)
+}
+
+const MAX_ENTRIES = 300
 
 export function useWorkerLogs(workers: Worker[]) {
   const [entries, setEntries] = useState<FeedEntry[]>([])
@@ -54,9 +69,16 @@ export function useWorkerLogs(workers: Worker[]) {
             type: data.type,
             timestamp: data.timestamp,
             message: data.message ?? data.text,
+            text: data.text,
             tool: data.tool,
+            input: data.input,
+            inputRaw: data.input_raw,
             error: data.error,
+            cost: data.cost,
+            duration: data.duration,
+            turns: data.turns,
           }
+          if (!hasContent(entry)) return
           setEntries(prev => {
             const next = [...prev, entry]
             return next.length > MAX_ENTRIES ? next.slice(-MAX_ENTRIES) : next

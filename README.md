@@ -72,7 +72,7 @@ Hooks：`useProjects`、`useTasks`、`useWorkers`、`useGitLog`、`useTheme`、`
 ```
 pending → claimed → running → merging → testing → completed
                                                  → failed
-                                                 → merge_pending (手动合并模式)
+                                                 → merge_pending (手动合并模式 / 自动合并失败)
 
 Plan 模式: pending → plan_pending → plan_approved → claimed → ...
 ```
@@ -219,12 +219,12 @@ claude-parallel-dev/
 1. Manager 的 `task_scheduler.py` 持续扫描 pending 任务
 2. 找到空闲 Worker 槽位后，认领最高优先级任务
 3. 在项目仓库中创建 git worktree（分支 `claude/{task_id}`）
-4. 启动 `claude-worker` Docker 容器，挂载 worktree 到 `/workspace`
+4. 启动 `claude-worker` Docker 容器，挂载 worktree 到 `/workspace`，同时挂载源仓库以解析 git worktree 链接
 5. 容器内 `run_task.sh` 运行 `claude -p` 执行任务
 6. Claude Code 完成后提交代码，容器通过 HTTP 回调通知 Manager
 7. Manager 执行 `merge_and_test.sh`：rebase → 测试 → 冲突解决（最多 3 次重试）
-8. 根据项目配置自动合并到 main 或标记为 `merge_pending` 等待手动合并
-9. 清理 worktree，Worker 回到空闲状态
+8. 自动合并成功 → `completed`，清理 worktree 和分支；自动合并失败 → `merge_pending`，保留分支供手动合并
+9. Worker 回到空闲状态
 
 ## 经验系统
 

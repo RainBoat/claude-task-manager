@@ -49,6 +49,11 @@ const zh: Record<string, string> = {
   'git.title': 'Git 历史',
   'git.no_commits': '暂无提交记录',
   'git.toggle': 'Git',
+  'git.files_changed': '{n} 个文件变更',
+  'git.additions': '添加',
+  'git.deletions': '删除',
+  'git.loading': '加载中...',
+  'git.no_changes': '无文件变更',
   // Add project modal
   'project.add_title': '添加项目',
   'project.name': '项目名称',
@@ -131,6 +136,11 @@ const en: Record<string, string> = {
   'git.title': 'Git History',
   'git.no_commits': 'No commits yet',
   'git.toggle': 'Git',
+  'git.files_changed': '{n} files changed',
+  'git.additions': 'additions',
+  'git.deletions': 'deletions',
+  'git.loading': 'Loading...',
+  'git.no_changes': 'No file changes',
   // Add project modal
   'project.add_title': 'Add Project',
   'project.name': 'Project Name',

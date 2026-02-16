@@ -110,6 +110,13 @@ export type KanbanColumn = {
   statuses: TaskStatus[]
 }
 
+export interface GitFileChange {
+  path: string
+  status: 'A' | 'M' | 'D' | 'R'
+  additions: number
+  deletions: number
+}
+
 export interface DispatcherEvent {
   ts: string
   source: string

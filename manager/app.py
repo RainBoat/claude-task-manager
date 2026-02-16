@@ -1025,6 +1025,74 @@ async def git_log(project_id: str, limit: int = 50):
         return {"commits": []}
 
 
+@app.get("/api/projects/{project_id}/git/commit/{sha}")
+async def git_commit_detail(project_id: str, sha: str):
+    repo_dir = f"/app/data/projects/{project_id}/repo"
+    if not os.path.isdir(os.path.join(repo_dir, ".git")):
+        return {"body": "", "files": []}
+
+    # Sanitize sha to prevent command injection
+    import re
+    if not re.match(r'^[0-9a-fA-F]{4,40}$', sha):
+        return {"body": "", "files": []}
+
+    try:
+        loop = asyncio.get_event_loop()
+
+        # Get full commit message body
+        body_result = await loop.run_in_executor(None, lambda: subprocess.run(
+            ["git", "show", "--format=%B", "--no-patch", sha],
+            capture_output=True, text=True, timeout=10, cwd=repo_dir,
+        ))
+        body = body_result.stdout.strip() if body_result.returncode == 0 else ""
+
+        # Get file status (A/M/D/R)
+        status_result = await loop.run_in_executor(None, lambda: subprocess.run(
+            ["git", "diff-tree", "--no-commit-id", "-r", "--name-status", sha],
+            capture_output=True, text=True, timeout=10, cwd=repo_dir,
+        ))
+
+        # Get numstat (additions/deletions)
+        numstat_result = await loop.run_in_executor(None, lambda: subprocess.run(
+            ["git", "diff-tree", "--no-commit-id", "-r", "--numstat", sha],
+            capture_output=True, text=True, timeout=10, cwd=repo_dir,
+        ))
+
+        # Parse name-status
+        status_map = {}
+        if status_result.returncode == 0:
+            for line in status_result.stdout.strip().split("\n"):
+                if not line.strip():
+                    continue
+                parts = line.split("\t")
+                if len(parts) >= 2:
+                    st = parts[0][0]  # First char: A, M, D, R
+                    path = parts[-1]
+                    status_map[path] = st
+
+        # Parse numstat and build files list
+        files = []
+        if numstat_result.returncode == 0:
+            for line in numstat_result.stdout.strip().split("\n"):
+                if not line.strip():
+                    continue
+                parts = line.split("\t")
+                if len(parts) >= 3:
+                    adds = int(parts[0]) if parts[0] != '-' else 0
+                    dels = int(parts[1]) if parts[1] != '-' else 0
+                    path = parts[2]
+                    files.append({
+                        "path": path,
+                        "status": status_map.get(path, "M"),
+                        "additions": adds,
+                        "deletions": dels,
+                    })
+
+        return {"body": body, "files": files}
+    except Exception:
+        return {"body": "", "files": []}
+
+
 # ============================================================
 # Stats API (project-scoped)
 # ============================================================

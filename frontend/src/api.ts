@@ -1,4 +1,4 @@
-import type { Task, TaskCreatePayload, Worker, Project, ProjectCreatePayload, ProjectSettingsPayload, GitCommit, DispatcherEvent } from './types'
+import type { Task, TaskCreatePayload, Worker, Project, ProjectCreatePayload, ProjectSettingsPayload, GitCommit, GitFileChange, DispatcherEvent } from './types'
 
 const BASE = ''
 
@@ -131,6 +131,12 @@ export async function fetchGitLog(projectId: string, limit = 50): Promise<GitCom
   if (!res.ok) throw new Error('Failed to fetch git log')
   const data = await res.json()
   return data.commits
+}
+
+export async function fetchCommitDetail(projectId: string, sha: string): Promise<{ body: string; files: GitFileChange[] }> {
+  const res = await fetch(`${BASE}/api/projects/${projectId}/git/commit/${sha}`)
+  if (!res.ok) throw new Error('Failed to fetch commit detail')
+  return res.json()
 }
 
 // ============================================================

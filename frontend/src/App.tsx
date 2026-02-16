@@ -220,6 +220,7 @@ export default function App() {
           <GitPanel
             commits={commits}
             lang={lang}
+            projectId={activeProjectId}
             onClose={() => setShowGitPanel(false)}
           />
         )}

@@ -142,6 +142,22 @@ def _do_auto_merge(
         except Exception:
             pass
 
+    # Ensure we're on the base branch before merging
+    co = _run_git(["git", "checkout", branch_base], cwd=repo_dir)
+    if co.returncode != 0:
+        logger.warning(f"[{worker_id}] Cannot checkout {branch_base}: {co.stderr[:200]}")
+        # Try force-creating from origin
+        co = _run_git(["git", "checkout", "-B", branch_base, f"origin/{branch_base}"], cwd=repo_dir)
+        if co.returncode != 0:
+            logger.warning(f"[{worker_id}] Cannot checkout {branch_base} from origin either")
+            return None
+
+    # Verify the branch ref exists
+    verify = _run_git(["git", "rev-parse", "--verify", branch_name], cwd=repo_dir)
+    if verify.returncode != 0:
+        logger.warning(f"[{worker_id}] Branch {branch_name} not found in repo")
+        return None
+
     r = _run_git(["git", "merge", branch_name, "--no-edit"], cwd=repo_dir)
     if r.returncode != 0:
         logger.warning(f"[{worker_id}] Merge to main failed (exit {r.returncode}): stdout={r.stdout[:200]} stderr={r.stderr[:200]}")

@@ -222,26 +222,38 @@ ${EXPERIENCE}"
         # Remove untracked CLAUDE.md from main repo to prevent merge conflicts
         rm -f "${REPO_DIR}/CLAUDE.md"
 
-        git -C "$REPO_DIR" merge "$BRANCH_NAME" --no-edit 2>/dev/null
-        if [ $? -ne 0 ]; then
-            echo "[${WORKER_ID}] Merge to main failed for task ${TASK_ID}, attempting auto-resolve..."
-            git -C "$REPO_DIR" merge --abort 2>/dev/null || true
-        fi
+        # Ensure we're on the base branch before merging
+        git -C "$REPO_DIR" checkout "$BRANCH_BASE" 2>/dev/null || {
+            echo "[${WORKER_ID}] Cannot checkout ${BRANCH_BASE}, trying from origin..."
+            git -C "$REPO_DIR" checkout -B "$BRANCH_BASE" "origin/${BRANCH_BASE}" 2>/dev/null || true
+        }
 
-        # Push only if auto_push is enabled
-        if [ "$AUTO_PUSH" = "true" ] && [ -n "$HAS_REMOTE" ]; then
-            git -C "$REPO_DIR" push origin "${BRANCH_BASE}" 2>/dev/null
-            if [ $? -ne 0 ]; then
-                echo "[${WORKER_ID}] Push failed for task ${TASK_ID} (non-fatal)"
-            fi
-        elif [ -z "$HAS_REMOTE" ]; then
-            echo "[${WORKER_ID}] No remote configured, skipping push"
+        # Verify branch exists before merge
+        if ! git -C "$REPO_DIR" rev-parse --verify "$BRANCH_NAME" >/dev/null 2>&1; then
+            echo "[${WORKER_ID}] Branch ${BRANCH_NAME} not found, skipping merge"
+            python3 "$CLAIM_SCRIPT" update "$PROJECT_ID" "$TASK_ID" "failed" --error "Branch ${BRANCH_NAME} not found for merge"
         else
-            echo "[${WORKER_ID}] Auto-push disabled, skipping push"
-        fi
+            git -C "$REPO_DIR" merge "$BRANCH_NAME" --no-edit 2>/dev/null
+            if [ $? -ne 0 ]; then
+                echo "[${WORKER_ID}] Merge to main failed for task ${TASK_ID}, attempting auto-resolve..."
+                git -C "$REPO_DIR" merge --abort 2>/dev/null || true
+            fi
 
-        echo "[${WORKER_ID}] Task ${TASK_ID} completed. Commit: ${FINAL_COMMIT}"
-        python3 "$CLAIM_SCRIPT" update "$PROJECT_ID" "$TASK_ID" "completed" --commit "$FINAL_COMMIT"
+            # Push only if auto_push is enabled
+            if [ "$AUTO_PUSH" = "true" ] && [ -n "$HAS_REMOTE" ]; then
+                git -C "$REPO_DIR" push origin "${BRANCH_BASE}" 2>/dev/null
+                if [ $? -ne 0 ]; then
+                    echo "[${WORKER_ID}] Push failed for task ${TASK_ID} (non-fatal)"
+                fi
+            elif [ -z "$HAS_REMOTE" ]; then
+                echo "[${WORKER_ID}] No remote configured, skipping push"
+            else
+                echo "[${WORKER_ID}] Auto-push disabled, skipping push"
+            fi
+
+            echo "[${WORKER_ID}] Task ${TASK_ID} completed. Commit: ${FINAL_COMMIT}"
+            python3 "$CLAIM_SCRIPT" update "$PROJECT_ID" "$TASK_ID" "completed" --commit "$FINAL_COMMIT"
+        fi
 
         # --- 9. Log experience ---
         python3 "$LOG_SCRIPT" \

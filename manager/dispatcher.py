@@ -217,13 +217,15 @@ def get_task(project_id: str, task_id: str) -> Optional[Task]:
 
 
 def recover_stale_tasks() -> int:
-    """Reset tasks stuck in intermediate states (claimed/running/merging/testing)
-    back to pending. Called on startup to recover from unclean shutdowns.
-    Note: merge_pending is a stable state (awaiting user action), not stale."""
-    stale_statuses = {
+    """Reset tasks stuck in intermediate states back to pending/failed.
+    Called on startup to recover from unclean shutdowns.
+    - claimed/running/merging/testing → pending (retryable, work not yet committed)
+    - merge_pending → failed (branch will be cleaned up, committed work is lost)"""
+    retryable_statuses = {
         TaskStatus.CLAIMED, TaskStatus.RUNNING,
         TaskStatus.MERGING, TaskStatus.TESTING,
     }
+    lost_statuses = {TaskStatus.MERGE_PENDING}
     lock = FileLock(REGISTRY_LOCK, timeout=10)
     with lock:
         registry = _read_registry()
@@ -237,10 +239,16 @@ def recover_stale_tasks() -> int:
                 queue = _read_queue(tasks_file)
                 changed = False
                 for task in queue.tasks:
-                    if task.status in stale_statuses:
+                    if task.status in retryable_statuses:
                         task.status = TaskStatus.PENDING
                         task.worker_id = None
                         task.error = None
+                        changed = True
+                        recovered += 1
+                    elif task.status in lost_statuses:
+                        task.status = TaskStatus.FAILED
+                        task.worker_id = None
+                        task.error = "Branch lost after container restart — please retry"
                         changed = True
                         recovered += 1
                 if changed:

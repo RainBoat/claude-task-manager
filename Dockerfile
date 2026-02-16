@@ -35,7 +35,7 @@ COPY --chown=claude:claude . /app/
 RUN cd /app/frontend && npm run build
 
 # Make scripts executable
-RUN chmod +x /app/entrypoint.sh /app/worker/ralph.sh /app/worker/merge_and_test.sh /app/init-and-run.sh
+RUN chmod +x /app/entrypoint.sh /app/worker/ralph.sh /app/worker/merge_and_test.sh /app/worker/run_task.sh /app/init-and-run.sh
 
 # Data volume mount point
 RUN mkdir -p /app/data/logs /app/data/worktrees && \

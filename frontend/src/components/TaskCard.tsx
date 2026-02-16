@@ -1,4 +1,4 @@
-import { RotateCcw, Trash2, Eye, GitMerge, GitPullRequest } from 'lucide-react'
+import { RotateCcw, Trash2, Eye, GitMerge, GitPullRequest, Square, X } from 'lucide-react'
 import type { Task } from '../types'
 import type { Lang } from '../i18n'
 import { t } from '../i18n'
@@ -69,6 +69,18 @@ export default function TaskCard({ task, columnKey, lang, onClick, onRetry, onCa
         <p className="text-xs text-txt-muted line-clamp-2 leading-relaxed">{task.description}</p>
       )}
 
+      {columnKey === 'backlog' && (
+        <div className="flex justify-end mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+          <button
+            onClick={e => { e.stopPropagation(); onCancel() }}
+            className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md text-txt-muted hover:text-red-500 hover:bg-red-500/10 transition-all duration-150"
+          >
+            <X size={11} />
+            {t('card.cancel', lang)}
+          </button>
+        </div>
+      )}
+
       {columnKey === 'in_progress' && (
         <div className="flex items-center gap-1.5 mt-2">
           {task.worker_id && (
@@ -88,14 +100,30 @@ export default function TaskCard({ task, columnKey, lang, onClick, onRetry, onCa
               {t('card.view_log', lang)}
             </button>
           )}
+          <button
+            onClick={e => { e.stopPropagation(); onCancel() }}
+            className="text-[10px] inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-txt-muted hover:text-red-500 hover:bg-red-500/10 transition-all duration-150 opacity-0 group-hover:opacity-100"
+          >
+            <Square size={9} className="fill-current" />
+            {t('card.stop', lang)}
+          </button>
         </div>
       )}
 
       {columnKey === 'review' && (
         <div className="mt-1.5">
-          <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-400 font-medium font-mono">
-            Plan
-          </span>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-400 font-medium font-mono">
+              Plan
+            </span>
+            <button
+              onClick={e => { e.stopPropagation(); onCancel() }}
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md text-txt-muted hover:text-red-500 hover:bg-red-500/10 transition-all duration-150 opacity-0 group-hover:opacity-100"
+            >
+              <X size={11} />
+              {t('card.cancel', lang)}
+            </button>
+          </div>
           {task.plan && (
             <p className="text-xs text-txt-muted line-clamp-3 mt-1.5 leading-relaxed">{task.plan.slice(0, 120)}...</p>
           )}
@@ -162,6 +190,25 @@ export default function TaskCard({ task, columnKey, lang, onClick, onRetry, onCa
 
       {columnKey === 'cancelled' && task.error && (
         <p className="text-xs text-txt-muted line-clamp-2 mt-1 leading-relaxed">{task.error}</p>
+      )}
+
+      {columnKey === 'cancelled' && (
+        <div className="flex gap-1 mt-2">
+          <button
+            onClick={e => { e.stopPropagation(); onRetry() }}
+            className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 font-medium transition-all duration-150"
+          >
+            <RotateCcw size={11} />
+            {t('card.retry', lang)}
+          </button>
+          <button
+            onClick={e => { e.stopPropagation(); onDelete() }}
+            className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-md bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 font-medium transition-all duration-150"
+          >
+            <Trash2 size={11} />
+            {t('card.delete', lang)}
+          </button>
+        </div>
       )}
     </div>
   )

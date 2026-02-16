@@ -63,11 +63,18 @@ while true; do
         BASE_REF="HEAD"
     fi
 
+    # Clean up any worktree that still holds the target branch (e.g. from a previous worker)
+    STALE_WT=$(git -C "$REPO_DIR" worktree list --porcelain 2>/dev/null | awk -v br="$BRANCH_NAME" '
+        /^worktree /{wt=$2} /^branch refs\/heads\//{if($2=="refs/heads/"br) print wt}')
+    if [ -n "$STALE_WT" ] && [ "$STALE_WT" != "$REPO_DIR" ]; then
+        echo "[${WORKER_ID}] Removing stale worktree holding branch ${BRANCH_NAME}: ${STALE_WT}"
+        git -C "$REPO_DIR" worktree remove --force "$STALE_WT" 2>/dev/null || rm -rf "$STALE_WT"
+    fi
+    git -C "$REPO_DIR" worktree prune 2>/dev/null || true
+
     # Create branch and worktree
     git -C "$REPO_DIR" branch -D "$BRANCH_NAME" 2>/dev/null || true
-    git -C "$REPO_DIR" worktree add -b "$BRANCH_NAME" "$WORKTREE_DIR" "$BASE_REF" 2>/dev/null
-
-    if [ $? -ne 0 ]; then
+    if ! git -C "$REPO_DIR" worktree add -b "$BRANCH_NAME" "$WORKTREE_DIR" "$BASE_REF" 2>&1; then
         echo "[${WORKER_ID}] Failed to create worktree for task ${TASK_ID}"
         python3 "$CLAIM_SCRIPT" update "$PROJECT_ID" "$TASK_ID" "failed" --error "worktree creation failed"
         continue

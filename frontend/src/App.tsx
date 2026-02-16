@@ -5,7 +5,7 @@ import GitPanel from './components/GitPanel'
 import AddProjectModal from './components/AddProjectModal'
 import TaskInput from './components/TaskInput'
 import KanbanBoard from './components/KanbanBoard'
-import PlanModal from './components/PlanModal'
+import PlanDialog from './components/PlanDialog'
 import BatchPlanReview from './components/BatchPlanReview'
 import LogModal from './components/LogModal'
 import WorkerStatusBar from './components/WorkerStatusBar'
@@ -124,13 +124,6 @@ export default function App() {
     await refreshTasks()
   }, [planTask, activeProjectId, refreshTasks])
 
-  const handleRejectPlan = useCallback(async (feedback: string) => {
-    if (!planTask || !activeProjectId) return
-    await approvePlan(activeProjectId, planTask.id, false, feedback)
-    setPlanTask(null)
-    await refreshTasks()
-  }, [planTask, activeProjectId, refreshTasks])
-
   // Batch plan handlers
   const handleBatchApproveSingle = useCallback(async (taskId: string) => {
     if (!activeProjectId) return
@@ -233,7 +226,7 @@ export default function App() {
       </div>
 
       {/* Worker Status Bar */}
-      <WorkerStatusBar workers={workers} lang={lang} onViewFullLog={handleViewLog} />
+      <WorkerStatusBar workers={workers} lang={lang} activeProjectId={activeProjectId} onViewFullLog={handleViewLog} onStopTask={handleCancel} />
 
       {/* Modals */}
       {showAddProject && (
@@ -244,12 +237,12 @@ export default function App() {
         />
       )}
 
-      {planTask && (
-        <PlanModal
+      {planTask && activeProjectId && (
+        <PlanDialog
           task={planTask}
+          projectId={activeProjectId}
           lang={lang}
           onApprove={handleApprovePlan}
-          onReject={handleRejectPlan}
           onClose={() => setPlanTask(null)}
         />
       )}

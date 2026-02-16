@@ -35,6 +35,12 @@ export interface GitCommit {
   refs: string[]
 }
 
+export interface PlanMessage {
+  role: 'assistant' | 'user'
+  content: string
+  timestamp: string
+}
+
 export interface Task {
   id: string
   title: string
@@ -47,6 +53,8 @@ export interface Task {
   plan_approved: boolean
   plan_questions: PlanQuestion[] | null
   plan_answers: Record<string, string> | null
+  plan_messages: PlanMessage[] | null
+  plan_session_id: string | null
   depends_on: string | null
   commit_id: string | null
   error: string | null
@@ -78,6 +86,7 @@ export interface PlanQuestion {
 export interface Worker {
   id: string
   pid: number | null
+  container_id: string | null
   status: 'idle' | 'busy' | 'stopped' | 'error'
   current_task_id: string | null
   current_task_title: string | null
@@ -99,4 +108,10 @@ export type KanbanColumn = {
   labelEn: string
   color: string
   statuses: TaskStatus[]
+}
+
+export interface DispatcherEvent {
+  ts: string
+  source: string
+  message: string
 }

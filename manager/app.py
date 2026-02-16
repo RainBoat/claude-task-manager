@@ -16,22 +16,48 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import dispatcher
-from models import TaskCreate, TaskStatus, PlanRequest, PlanApproval, ProjectCreate, ProjectStatus
-from worker_pool import pool
+import event_log
+from models import TaskCreate, TaskStatus, PlanRequest, PlanApproval, PlanChatRequest, ProjectCreate, ProjectStatus
 from stream_parser import tail_log, parse_log_file
+
+# --- Worker mode selection ---
+WORKER_MODE = os.environ.get("WORKER_MODE", "container")
+
+if WORKER_MODE == "container":
+    from container_pool import ContainerPool
+    import task_scheduler
+    _container_pool = None  # initialized in lifespan
+    pool = None  # type: ignore  # set in lifespan for compat
+else:
+    from worker_pool import pool
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: discover existing workers."""
-    pool.discover_workers()
-    worker_count = int(os.environ.get("WORKER_COUNT", "3"))
-    for i in range(1, worker_count + 1):
-        wid = f"worker-{i}"
-        if not pool.get(wid):
-            pool.register(wid)
-    pool.discover_workers()
-    yield
+    """Startup: initialize worker pool and optionally start dispatcher loop."""
+    global pool, _container_pool
+
+    if WORKER_MODE == "container":
+        worker_count = int(os.environ.get("WORKER_COUNT", "3"))
+        _container_pool = ContainerPool(worker_count=worker_count)
+        pool = _container_pool  # expose for API handlers
+        task_scheduler.container_pool = _container_pool
+        _dispatcher_task = asyncio.create_task(task_scheduler.task_dispatcher_loop())
+        yield
+        _dispatcher_task.cancel()
+        try:
+            await _dispatcher_task
+        except asyncio.CancelledError:
+            pass
+    else:
+        pool.discover_workers()
+        worker_count = int(os.environ.get("WORKER_COUNT", "3"))
+        for i in range(1, worker_count + 1):
+            wid = f"worker-{i}"
+            if not pool.get(wid):
+                pool.register(wid)
+        pool.discover_workers()
+        yield
 
 
 app = FastAPI(title="Claude Parallel Dev Manager", lifespan=lifespan)
@@ -262,6 +288,8 @@ async def list_tasks(project_id: str):
 async def create_task(project_id: str, body: TaskCreate):
     t = dispatcher.add_task(project_id, body)
     if body.plan_mode:
+        # Set to PLAN_PENDING immediately so workers don't claim it before plan is ready
+        dispatcher.update_task_status(project_id, t.id, TaskStatus.PLAN_PENDING)
         asyncio.create_task(_generate_plan_async(project_id, t.id, t.title, t.description))
     return t.model_dump()
 
@@ -287,15 +315,30 @@ async def cancel_task(project_id: str, task_id: str):
     task = dispatcher.get_task(project_id, task_id)
     if not task:
         return JSONResponse(status_code=404, content={"error": "task not found"})
-    cancellable = {
+    cancellable_direct = {
         TaskStatus.PENDING, TaskStatus.PLAN_PENDING,
         TaskStatus.PLAN_APPROVED, TaskStatus.FAILED,
     }
-    if task.status not in cancellable:
+    cancellable_running = {
+        TaskStatus.CLAIMED, TaskStatus.RUNNING,
+        TaskStatus.MERGING, TaskStatus.TESTING,
+    }
+    if task.status in cancellable_running:
+        # Find the worker holding this task and stop it
+        for w in pool.get_all():
+            if w.current_task_id == task_id:
+                if WORKER_MODE == "container":
+                    pool.stop_worker(w.id)
+                else:
+                    pool.restart_worker(w.id)
+                break
+        dispatcher.update_task_status(project_id=project_id, task_id=task_id, status=TaskStatus.CANCELLED)
+    elif task.status in cancellable_direct:
+        dispatcher.update_task_status(project_id=project_id, task_id=task_id, status=TaskStatus.CANCELLED)
+    else:
         return JSONResponse(status_code=400, content={
             "error": f"Cannot cancel task in '{task.status}' state"
         })
-    dispatcher.update_task_status(project_id=project_id, task_id=task_id, status=TaskStatus.CANCELLED)
     return {"status": "cancelled", "task_id": task_id}
 
 
@@ -304,12 +347,25 @@ async def retry_task(project_id: str, task_id: str):
     task = dispatcher.get_task(project_id, task_id)
     if not task:
         return JSONResponse(status_code=404, content={"error": "task not found"})
-    if task.status != TaskStatus.FAILED:
+    retryable = {TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.COMPLETED, TaskStatus.PLAN_PENDING}
+    if task.status not in retryable:
         return JSONResponse(status_code=400, content={
             "error": f"Cannot retry task in '{task.status}' state"
         })
-    dispatcher.update_task_status(project_id=project_id, task_id=task_id, status=TaskStatus.PENDING, error="")
-    return {"status": "retrying", "task_id": task_id}
+    # Check if this task uses plan mode
+    if task.plan_mode:
+        dispatcher.update_task_status(
+            project_id=project_id, task_id=task_id,
+            status=TaskStatus.PLAN_PENDING, error="",
+        )
+        asyncio.create_task(_generate_plan_async(project_id, task_id, task.title, task.description))
+        return {"status": "retrying_plan", "task_id": task_id}
+    else:
+        dispatcher.update_task_status(
+            project_id=project_id, task_id=task_id,
+            status=TaskStatus.PENDING, error="",
+        )
+        return {"status": "retrying", "task_id": task_id}
 
 
 # ============================================================
@@ -540,6 +596,7 @@ async def create_task_legacy(body: TaskCreate):
         return JSONResponse(status_code=400, content={"error": "no projects configured"})
     t = dispatcher.add_task(pid, body)
     if body.plan_mode:
+        dispatcher.update_task_status(pid, t.id, TaskStatus.PLAN_PENDING)
         asyncio.create_task(_generate_plan_async(pid, t.id, t.title, t.description))
     return t.model_dump()
 
@@ -559,60 +616,140 @@ async def list_workers():
     return [w.model_dump() for w in workers]
 
 
+@app.get("/api/dispatcher/events")
+async def dispatcher_events(limit: int = 50):
+    return event_log.recent(limit)
+
+
 @app.post("/api/workers/{worker_id}/restart")
 async def restart_worker(worker_id: str):
-    ok = pool.restart_worker(worker_id)
-    if ok:
-        return {"status": "restarted"}
-    return JSONResponse(status_code=404, content={"error": "worker not found"})
+    if WORKER_MODE == "container":
+        ok = pool.stop_worker(worker_id)
+        if ok:
+            return {"status": "stopped"}
+        return JSONResponse(status_code=404, content={"error": "worker not found or not running"})
+    else:
+        ok = pool.restart_worker(worker_id)
+        if ok:
+            return {"status": "restarted"}
+        return JSONResponse(status_code=404, content={"error": "worker not found"})
+
+
+# ============================================================
+# Internal API (worker container callbacks)
+# ============================================================
+
+from pydantic import BaseModel as _InternalBase
+
+class InternalStatusUpdate(_InternalBase):
+    status: str
+    branch: Optional[str] = None
+    commit: Optional[str] = None
+    error: Optional[str] = None
+
+
+@app.post("/api/internal/tasks/{project_id}/{task_id}/status")
+async def internal_update_status(project_id: str, task_id: str, body: InternalStatusUpdate):
+    """Called by worker containers to report status changes."""
+    try:
+        status = TaskStatus(body.status)
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": f"invalid status: {body.status}"})
+
+    task = dispatcher.update_task_status(
+        project_id=project_id,
+        task_id=task_id,
+        status=status,
+        error=body.error,
+        commit_id=body.commit,
+        branch=body.branch,
+    )
+    if task:
+        return {"status": "updated", "task_id": task_id}
+    return JSONResponse(status_code=404, content={"error": "task not found"})
+
+
+@app.get("/api/internal/tasks/{project_id}/{task_id}")
+async def internal_get_task(project_id: str, task_id: str):
+    """Called by worker containers to query task details."""
+    t = dispatcher.get_task(project_id, task_id)
+    if t:
+        return t.model_dump()
+    return JSONResponse(status_code=404, content={"error": "task not found"})
 
 
 # ============================================================
 # Plan Mode API (project-scoped)
 # ============================================================
 
+def _parse_plan_output(stdout: str) -> tuple[str, str | None]:
+    """Extract assistant text and session_id from stream-json output."""
+    text_parts = []
+    session_id = None
+    for line in stdout.strip().split("\n"):
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+            if event.get("type") == "assistant":
+                message = event.get("message", {})
+                if isinstance(message, dict):
+                    for block in message.get("content", []):
+                        if block.get("type") == "text":
+                            text_parts.append(block["text"])
+                elif isinstance(message, str):
+                    text_parts.append(message)
+            elif event.get("type") == "result":
+                session_id = event.get("session_id")
+        except json.JSONDecodeError:
+            continue
+    return "\n".join(text_parts), session_id
+
+
 async def _generate_plan_async(project_id: str, task_id: str, title: str, description: str):
-    """Background coroutine to generate a plan via Claude CLI."""
+    """Background coroutine to generate a plan via Claude CLI (stream-json mode)."""
     repo_dir = f"/app/data/projects/{project_id}/repo"
+    log_dir = f"/app/data/projects/{project_id}/logs"
+    os.makedirs(log_dir, exist_ok=True)
+    plan_log = f"{log_dir}/plan-{task_id}.jsonl"
 
-    plan_prompt = f"""You are a senior software architect. Analyze this task and create a detailed implementation plan.
+    plan_prompt = f"""你是一位资深软件架构师。分析以下任务并创建详细的实现方案。
 
-Task: {title}
-Description: {description}
+## Context
+你正在为项目生成实现方案。
+你的工作目录是: {repo_dir}
+你必须只分析和引用 {repo_dir} 内的文件。不要读取或引用此目录之外的任何文件。
 
-Create a step-by-step plan that includes:
-1. Files to modify or create
-2. Specific changes needed in each file
-3. Testing approach
-4. Potential risks or edge cases
+## 任务: {title}
+描述: {description}
 
-IMPORTANT: Your response must be valid JSON with this structure:
-{{
-  "plan": "... markdown plan content ...",
-  "questions": [
-    {{
-      "key": "unique_key",
-      "question": "Question description",
-      "options": ["Option 1", "Option 2", "Option 3"],
-      "default": "Recommended option"
-    }}
-  ]
-}}
-
-If you have no questions, set "questions" to an empty array.
-Generate questions ONLY when the task has genuine ambiguity that needs user input."""
+## 要求
+1. 先探索项目结构，了解代码库的组织方式
+2. 分析需要修改或创建的文件
+3. 给出每个文件的具体修改方案
+4. 如果有需要用户决策的地方，明确提出问题并给出选项
+5. 用 markdown 格式组织你的回复
+6. 所有文件路径必须相对于 {repo_dir}"""
 
     try:
         loop = asyncio.get_event_loop()
+        plan_timeout = int(os.environ.get("PLAN_TIMEOUT", "600"))
+        event_log.emit("system", f"Generating plan for: {title}")
         result = await loop.run_in_executor(None, lambda: subprocess.run(
             ["claude", "-p", plan_prompt,
              "--dangerously-skip-permissions",
-             "--output-format", "json"],
-            capture_output=True, text=True, timeout=120,
+             "--output-format", "stream-json",
+             "--verbose"],
+            capture_output=True, text=True, timeout=plan_timeout,
             cwd=repo_dir,
         ))
 
+        # Write plan log file (for WebSocket streaming)
+        with open(plan_log, "w") as f:
+            f.write(result.stdout)
+
         if result.returncode != 0:
+            event_log.emit("system", f"Plan generation failed for: {title}")
             dispatcher.update_task_status(
                 project_id=project_id, task_id=task_id,
                 status=TaskStatus.FAILED,
@@ -620,37 +757,30 @@ Generate questions ONLY when the task has genuine ambiguity that needs user inpu
             )
             return
 
-        plan_text = ""
-        questions = []
-        try:
-            output = json.loads(result.stdout)
-            raw = output.get("result", result.stdout)
-            try:
-                structured = json.loads(raw) if isinstance(raw, str) else raw
-                if isinstance(structured, dict) and "plan" in structured:
-                    plan_text = structured["plan"]
-                    questions = structured.get("questions", [])
-                else:
-                    plan_text = raw if isinstance(raw, str) else json.dumps(raw)
-            except (json.JSONDecodeError, TypeError):
-                plan_text = raw if isinstance(raw, str) else str(raw)
-        except json.JSONDecodeError:
-            plan_text = result.stdout
+        # Parse output: extract assistant text and session_id
+        plan_text, session_id = _parse_plan_output(result.stdout)
+
+        now = datetime.utcnow().isoformat()
+        plan_messages = [{"role": "assistant", "content": plan_text, "timestamp": now}]
 
         dispatcher.update_task_status(
             project_id=project_id, task_id=task_id,
             status=TaskStatus.PLAN_PENDING,
             plan=plan_text,
-            plan_questions=questions if questions else None,
+            plan_messages=plan_messages,
+            plan_session_id=session_id,
         )
+        event_log.emit("system", f"Plan ready for: {title}")
 
     except subprocess.TimeoutExpired:
+        event_log.emit("system", f"Plan generation timed out for: {title}")
         dispatcher.update_task_status(
             project_id=project_id, task_id=task_id,
             status=TaskStatus.FAILED,
-            error="Plan generation timed out (120s)",
+            error=f"Plan generation timed out ({plan_timeout}s)",
         )
     except Exception as e:
+        event_log.emit("system", f"Plan generation failed: {str(e)}")
         dispatcher.update_task_status(
             project_id=project_id, task_id=task_id,
             status=TaskStatus.FAILED,
@@ -697,6 +827,83 @@ async def approve_plan(project_id: str, req: PlanApproval):
         return {"status": "rejected", "task_id": req.task_id}
 
 
+@app.post("/api/projects/{project_id}/plan/chat")
+async def plan_chat(project_id: str, req: PlanChatRequest):
+    task = dispatcher.get_task(project_id, req.task_id)
+    if not task:
+        return JSONResponse(status_code=404, content={"error": "task not found"})
+
+    repo_dir = f"/app/data/projects/{project_id}/repo"
+    log_dir = f"/app/data/projects/{project_id}/logs"
+    os.makedirs(log_dir, exist_ok=True)
+    plan_log = f"{log_dir}/plan-{req.task_id}.jsonl"
+
+    # Record user message
+    now = datetime.utcnow().isoformat()
+    plan_messages = list(task.plan_messages or [])
+    plan_messages.append({"role": "user", "content": req.message, "timestamp": now})
+
+    # Save user message immediately so frontend can see it
+    dispatcher.update_task_status(
+        project_id=project_id, task_id=req.task_id,
+        status=TaskStatus.PLAN_PENDING,
+        plan_messages=plan_messages,
+    )
+
+    # Build claude command: use -c to continue conversation
+    context_prefix = f"[工作目录: {repo_dir} — 只分析此目录内的文件]\n\n"
+    cmd = ["claude", "-p", context_prefix + req.message,
+           "--dangerously-skip-permissions",
+           "--output-format", "stream-json",
+           "--verbose"]
+
+    if task.plan_session_id:
+        cmd.extend(["-c", task.plan_session_id])
+
+    # Run async, output appends to plan log
+    asyncio.create_task(_run_plan_chat(
+        project_id, req.task_id, cmd, repo_dir, plan_log, plan_messages
+    ))
+
+    return {"status": "streaming", "task_id": req.task_id}
+
+
+async def _run_plan_chat(project_id, task_id, cmd, repo_dir, plan_log, plan_messages):
+    plan_timeout = int(os.environ.get("PLAN_TIMEOUT", "600"))
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, lambda: subprocess.run(
+            cmd, capture_output=True, text=True, timeout=plan_timeout, cwd=repo_dir,
+        ))
+
+        # Append to plan log (WebSocket will pick up new content)
+        with open(plan_log, "a") as f:
+            f.write(result.stdout)
+
+        # Parse assistant reply and new session_id
+        plan_text, session_id = _parse_plan_output(result.stdout)
+
+        now = datetime.utcnow().isoformat()
+        plan_messages.append({"role": "assistant", "content": plan_text, "timestamp": now})
+
+        dispatcher.update_task_status(
+            project_id=project_id, task_id=task_id,
+            status=TaskStatus.PLAN_PENDING,
+            plan=plan_text,
+            plan_messages=plan_messages,
+            plan_session_id=session_id or None,
+        )
+    except Exception as e:
+        now = datetime.utcnow().isoformat()
+        plan_messages.append({"role": "assistant", "content": f"Error: {str(e)}", "timestamp": now})
+        dispatcher.update_task_status(
+            project_id=project_id, task_id=task_id,
+            status=TaskStatus.PLAN_PENDING,
+            plan_messages=plan_messages,
+            error=f"Plan chat error: {str(e)}",
+        )
+
+
 from pydantic import BaseModel as _BaseModel
 
 class BatchPlanApproval(_BaseModel):
@@ -727,6 +934,25 @@ async def batch_approve_plans(project_id: str, req: BatchPlanApproval):
             )
             results.append({"task_id": task_id, "status": "rejected"})
     return {"results": results}
+
+
+@app.websocket("/ws/plan/{project_id}/{task_id}")
+async def ws_plan(websocket: WebSocket, project_id: str, task_id: str):
+    await websocket.accept()
+    plan_log = f"/app/data/projects/{project_id}/logs/plan-{task_id}.jsonl"
+    try:
+        existing = parse_log_file(plan_log)
+        for event in existing:
+            await websocket.send_json(event)
+        async for event in tail_log(plan_log):
+            await websocket.send_json(event)
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        try:
+            await websocket.send_json({"type": "error", "error": str(e)})
+        except Exception:
+            pass
 
 
 # Legacy plan endpoints

@@ -42,7 +42,7 @@ export default function AddProjectModal({ lang, onSubmit, onClose }: Props) {
 
   const handleSubmit = async () => {
     if (!name.trim()) return
-    if (!repoUrl.trim()) return
+    if (sourceType !== 'new' && !repoUrl.trim()) return
     setSubmitting(true)
     try {
       await onSubmit(name.trim(), repoUrl.trim(), branch.trim() || 'main', sourceType)

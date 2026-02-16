@@ -1,4 +1,4 @@
-import type { Task, TaskCreatePayload, Worker, Project, ProjectCreatePayload, ProjectSettingsPayload, GitCommit } from './types'
+import type { Task, TaskCreatePayload, Worker, Project, ProjectCreatePayload, ProjectSettingsPayload, GitCommit, DispatcherEvent } from './types'
 
 const BASE = ''
 
@@ -194,10 +194,38 @@ export async function fetchUnpushed(projectId: string): Promise<{ count: number;
 }
 
 // ============================================================
+// Dispatcher Events (global)
+// ============================================================
+
+export async function fetchDispatcherEvents(limit = 50): Promise<DispatcherEvent[]> {
+  const res = await fetch(`${BASE}/api/dispatcher/events?limit=${limit}`)
+  if (!res.ok) return []
+  return res.json()
+}
+
+// ============================================================
 // WebSocket
 // ============================================================
 
 export function createLogSocket(workerId: string): WebSocket {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
   return new WebSocket(`${proto}//${location.host}/ws/logs/${workerId}`)
+}
+
+export function createPlanSocket(projectId: string, taskId: string): WebSocket {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return new WebSocket(`${proto}//${location.host}/ws/plan/${projectId}/${taskId}`)
+}
+
+// ============================================================
+// Plan Chat
+// ============================================================
+
+export async function planChat(projectId: string, taskId: string, message: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/projects/${projectId}/plan/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id: taskId, message }),
+  })
+  if (!res.ok) throw new Error('Failed to send plan message')
 }

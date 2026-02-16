@@ -7,3 +7,4 @@ python-multipart==0.0.19
 pydantic==2.10.3
 websockets==14.1
 aiofiles==24.1.0
+docker>=7.0.0

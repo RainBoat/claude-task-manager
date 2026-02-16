@@ -1,20 +1,43 @@
 services:
   claude-dev:
-    build: .
+    build:
+      context: .
+      args:
+        - HTTP_PROXY=${HTTP_PROXY:-}
+        - HTTPS_PROXY=${HTTPS_PROXY:-}
+        - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1}
     container_name: claude-parallel-dev
     env_file: .env
+    environment:
+      - DATA_HOST_PATH=${DATA_HOST_PATH:-./data}
+      - WORKER_MODE=${WORKER_MODE:-container}
+      - MANAGER_INTERNAL_URL=${MANAGER_INTERNAL_URL:-http://host.docker.internal:8420}
     ports:
       - "${WEB_PORT:-8420}:${WEB_PORT:-8420}"
     volumes:
       - ./data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
       # Mount local repos for local project mode:
       # - /path/to/local/repo:/mnt/repos/my-repo
       # - /home/user/projects:/mnt/repos
     deploy:
       resources:
         limits:
-          cpus: "28"
-          memory: 96g
+          cpus: "4"
+          memory: 4g
     restart: unless-stopped
     stdin_open: true
     tty: true
+
+  # Worker image — built but not started as a service.
+  # Manager dynamically creates containers from this image.
+  claude-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+      args:
+        - HTTP_PROXY=${HTTP_PROXY:-}
+        - HTTPS_PROXY=${HTTPS_PROXY:-}
+        - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1}
+    image: claude-worker:latest
+    profiles: ["build-only"]

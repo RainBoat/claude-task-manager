@@ -9,6 +9,7 @@ echo "Port:    ${WEB_PORT:-8420}"
 git config --global user.name "${GIT_USER_NAME:-Claude Worker}"
 git config --global user.email "${GIT_USER_EMAIL:-claude-worker@dev.local}"
 git config --global init.defaultBranch main
+git config --global --add safe.directory '*'
 git config --global http.postBuffer 524288000
 git config --global http.lowSpeedLimit 1000
 git config --global http.lowSpeedTime 60
@@ -211,24 +212,35 @@ print(recover_stale_tasks())
 " 2>/dev/null || echo "0")
 echo "Recovered ${RECOVERED} stale task(s)"
 
-# --- Start Workers ---
-WORKER_COUNT="${WORKER_COUNT:-3}"
-WORKER_PIDS=()
+# --- Start Workers (process mode only) ---
+WORKER_MODE="${WORKER_MODE:-container}"
 
-for i in $(seq 1 "$WORKER_COUNT"); do
-    echo "Starting Worker $i..."
-    WORKER_ID="worker-$i" \
-    /app/worker/ralph.sh &
-    WORKER_PIDS+=($!)
-    echo "Worker $i PID: ${WORKER_PIDS[-1]}"
-done
+if [ "$WORKER_MODE" = "process" ]; then
+    WORKER_COUNT="${WORKER_COUNT:-3}"
+    WORKER_PIDS=()
 
-echo "=== All systems running ==="
-echo "Dashboard: http://localhost:${WEB_PORT:-8420}"
+    for i in $(seq 1 "$WORKER_COUNT"); do
+        echo "Starting Worker $i (process mode)..."
+        WORKER_ID="worker-$i" \
+        /app/worker/ralph.sh &
+        WORKER_PIDS+=($!)
+        echo "Worker $i PID: ${WORKER_PIDS[-1]}"
+    done
 
-# --- Wait for any process to exit ---
-wait -n "$MANAGER_PID" "${WORKER_PIDS[@]}" 2>/dev/null || true
+    echo "=== All systems running (process mode) ==="
+    echo "Dashboard: http://localhost:${WEB_PORT:-8420}"
 
-echo "A process exited. Shutting down..."
-kill "$MANAGER_PID" "${WORKER_PIDS[@]}" 2>/dev/null || true
-wait
+    # Wait for any process to exit
+    wait -n "$MANAGER_PID" "${WORKER_PIDS[@]}" 2>/dev/null || true
+
+    echo "A process exited. Shutting down..."
+    kill "$MANAGER_PID" "${WORKER_PIDS[@]}" 2>/dev/null || true
+    wait
+else
+    echo "=== All systems running (container mode) ==="
+    echo "Dashboard: http://localhost:${WEB_PORT:-8420}"
+    echo "Workers will be launched as Docker containers by the task scheduler."
+
+    # Just wait for the manager process
+    wait "$MANAGER_PID"
+fi

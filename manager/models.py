@@ -76,7 +76,10 @@ class Task(BaseModel):
     plan_approved: bool = False
     plan_questions: Optional[list[dict]] = None  # Claude-generated questions
     plan_answers: Optional[dict] = None          # user-selected answers
+    plan_messages: Optional[list[dict]] = None   # [{role, content, timestamp}]
+    plan_session_id: Optional[str] = None        # Claude CLI session ID for -c
     depends_on: Optional[str] = None             # predecessor task ID
+    plan_mode: bool = False                      # whether task uses plan-review flow
     commit_id: Optional[str] = None
     error: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
@@ -110,7 +113,8 @@ class WorkerStatus(str, Enum):
 
 class WorkerState(BaseModel):
     id: str
-    pid: Optional[int] = None
+    pid: Optional[int] = None           # process mode
+    container_id: Optional[str] = None   # container mode
     status: WorkerStatus = WorkerStatus.IDLE
     current_task_id: Optional[str] = None
     current_task_title: Optional[str] = None
@@ -132,3 +136,8 @@ class PlanApproval(BaseModel):
     approved: bool
     feedback: Optional[str] = None
     answers: Optional[dict] = None  # {"question_key": "selected_option"}
+
+
+class PlanChatRequest(BaseModel):
+    task_id: str
+    message: str

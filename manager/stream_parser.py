@@ -126,6 +126,7 @@ def _parse_event(event: dict) -> list[dict]:
             "cost": event.get("cost_usd"),
             "duration": event.get("duration_ms"),
             "turns": event.get("num_turns"),
+            "session_id": event.get("session_id"),
         })
 
     elif etype == "error":

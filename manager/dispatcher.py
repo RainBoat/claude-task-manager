@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 from datetime import datetime
 from typing import Optional
 
@@ -183,6 +185,7 @@ def add_task(project_id: str, create: TaskCreate) -> Task:
             description=create.description,
             priority=create.priority,
             depends_on=create.depends_on,
+            plan_mode=create.plan_mode,
         )
         queue.tasks.append(task)
         _write_queue(tasks_file, queue)
@@ -244,6 +247,47 @@ def recover_stale_tasks() -> int:
                     _write_queue(tasks_file, queue)
         except Exception:
             continue
+
+        # Cleanup orphaned worktrees and branches for this project
+        repo_dir = f"/app/data/projects/{project.id}/repo"
+        worktree_base = f"/app/data/projects/{project.id}/worktrees"
+
+        if not os.path.isdir(repo_dir):
+            continue
+
+        try:
+            # 1. Remove all worktree directories
+            if os.path.isdir(worktree_base):
+                for entry in os.listdir(worktree_base):
+                    wt_path = os.path.join(worktree_base, entry)
+                    subprocess.run(
+                        ["git", "worktree", "remove", "--force", wt_path],
+                        cwd=repo_dir, capture_output=True, timeout=30,
+                    )
+                    if os.path.isdir(wt_path):
+                        shutil.rmtree(wt_path, ignore_errors=True)
+
+            # 2. Prune stale worktree references
+            subprocess.run(
+                ["git", "worktree", "prune"],
+                cwd=repo_dir, capture_output=True, timeout=30,
+            )
+
+            # 3. Delete all claude/* branches (they are ephemeral)
+            result = subprocess.run(
+                ["git", "branch", "--list", "claude/*"],
+                cwd=repo_dir, capture_output=True, text=True, timeout=30,
+            )
+            for line in result.stdout.splitlines():
+                branch = line.strip().lstrip("* ")
+                if branch:
+                    subprocess.run(
+                        ["git", "branch", "-D", branch],
+                        cwd=repo_dir, capture_output=True, timeout=30,
+                    )
+        except Exception as e:
+            logger.warning(f"Failed to cleanup worktrees/branches for project {project.id}: {e}")
+
     return recovered
 
 
@@ -315,6 +359,8 @@ def update_task_status(
     branch: Optional[str] = None,
     plan_questions: Optional[list[dict]] = None,
     plan_answers: Optional[dict] = None,
+    plan_messages: Optional[list[dict]] = None,
+    plan_session_id: Optional[str] = None,
     depends_on: Optional[str] = None,
 ) -> Optional[Task]:
     tasks_file, lock_file = _get_paths(project_id)
@@ -336,6 +382,10 @@ def update_task_status(
                     task.plan_questions = plan_questions
                 if plan_answers is not None:
                     task.plan_answers = plan_answers
+                if plan_messages is not None:
+                    task.plan_messages = plan_messages
+                if plan_session_id is not None:
+                    task.plan_session_id = plan_session_id
                 if depends_on is not None:
                     task.depends_on = depends_on
                 if status == TaskStatus.COMPLETED:

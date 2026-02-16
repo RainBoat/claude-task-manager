@@ -3,3 +3,4 @@ manager/static/dist
 .git
 *.pyc
 __pycache__
+data/

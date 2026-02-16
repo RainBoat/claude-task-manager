@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { X, Wifi, WifiOff } from 'lucide-react'
 import { createLogSocket } from '../api'
 import type { Lang } from '../i18n'
 import { t } from '../i18n'
@@ -13,9 +14,18 @@ interface LogEntry {
   type: string
   timestamp?: string
   message?: string
+  text?: string
   tool?: string
   error?: string
   [key: string]: any
+}
+
+const typeColor: Record<string, string> = {
+  error: 'text-red-500 dark:text-red-400',
+  tool_use: 'text-accent',
+  tool_result: 'text-txt-muted',
+  assistant: 'text-txt-secondary',
+  system: 'text-amber-500 dark:text-amber-400',
 }
 
 export default function LogModal({ workerId, lang, onClose }: Props) {
@@ -47,35 +57,43 @@ export default function LogModal({ workerId, lang, onClose }: Props) {
 
   const formatEntry = (entry: LogEntry): string => {
     const ts = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : ''
-    if (entry.type === 'assistant' && entry.message) return `${ts} [assistant] ${entry.message}`
-    if (entry.type === 'tool_use') return `${ts} [tool] ${entry.tool ?? ''}: ${entry.message ?? ''}`
-    if (entry.type === 'tool_result') return `${ts} [result] ${(entry.message ?? '').slice(0, 200)}`
-    if (entry.type === 'error') return `${ts} [ERROR] ${entry.error ?? entry.message ?? ''}`
-    return `${ts} [${entry.type}] ${entry.message ?? JSON.stringify(entry).slice(0, 200)}`
+    const msg = entry.message ?? entry.text ?? ''
+    if (entry.type === 'assistant' && msg) return `${ts}  ${msg}`
+    if (entry.type === 'tool_use') return `${ts}  → ${entry.tool ?? ''}: ${msg}`
+    if (entry.type === 'tool_result') return `${ts}  ← ${msg.slice(0, 300)}`
+    if (entry.type === 'error') return `${ts}  ✗ ${entry.error ?? msg}`
+    if (entry.type === 'system') return `${ts}  ⚙ ${msg}`
+    return `${ts}  [${entry.type}] ${msg || JSON.stringify(entry).slice(0, 200)}`
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="bg-gray-900 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col mx-4"
+        className="bg-surface rounded-xl shadow-2xl w-full max-w-4xl max-h-[80vh] flex flex-col mx-4 border animate-scale-in"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border">
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-gray-200">{t('log.title', lang)} — {workerId}</h2>
-            <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400' : 'bg-red-400'}`} />
+            <h2 className="text-sm font-semibold text-txt font-mono">{t('log.title', lang)} — {workerId}</h2>
+            {connected ? (
+              <Wifi size={13} className="text-emerald-400" />
+            ) : (
+              <WifiOff size={13} className="text-red-400" />
+            )}
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400 text-lg">✕</button>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-light text-txt-muted hover:text-txt transition-all duration-150">
+            <X size={16} />
+          </button>
         </div>
 
         {/* Log content */}
-        <div className="flex-1 overflow-y-auto p-4 log-terminal text-xs text-gray-300 space-y-0.5">
+        <div className="flex-1 overflow-y-auto p-4 log-terminal text-[11px] text-txt-secondary space-y-px">
           {entries.length === 0 && (
-            <p className="text-gray-500 text-center py-8">Waiting for log entries...</p>
+            <p className="text-txt-muted text-center py-8 text-xs">Waiting for log entries...</p>
           )}
           {entries.map((entry, i) => (
-            <div key={i} className={`leading-relaxed ${entry.type === 'error' ? 'text-red-400' : ''}`}>
+            <div key={i} className={`leading-relaxed font-mono ${typeColor[entry.type] ?? 'text-txt-muted'}`}>
               {formatEntry(entry)}
             </div>
           ))}
@@ -83,10 +101,10 @@ export default function LogModal({ workerId, lang, onClose }: Props) {
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-2.5 border-t border-gray-700 flex justify-end">
+        <div className="px-4 py-2 border-t border flex justify-end">
           <button
             onClick={onClose}
-            className="px-4 py-1.5 rounded-lg border border-gray-600 text-gray-300 text-xs hover:bg-gray-800 transition-colors"
+            className="px-3 py-1 rounded-lg border text-txt-secondary text-xs hover:bg-surface-light transition-all duration-150"
           >
             {t('log.close', lang)}
           </button>

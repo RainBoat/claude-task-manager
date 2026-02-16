@@ -25,7 +25,7 @@ class Project(BaseModel):
     name: str
     repo_url: Optional[str] = None
     branch: str = "main"
-    source_type: str = "git"  # "git" | "local"
+    source_type: str = "git"  # "git" | "local" | "new"
     auto_merge: bool = True
     auto_push: bool = False
     status: ProjectStatus = ProjectStatus.CLONING

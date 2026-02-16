@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from 'react'
+import { Send, Mic, Sparkles, Link } from 'lucide-react'
 import type { Task, TaskCreatePayload } from '../types'
 import type { Lang } from '../i18n'
 import { t } from '../i18n'
@@ -15,6 +16,7 @@ export default function TaskInput({ tasks, lang, onSubmit }: Props) {
   const [planMode, setPlanMode] = useState(false)
   const [dependsOn, setDependsOn] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [focused, setFocused] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const handleVoiceResult = useCallback((text: string) => {
@@ -52,66 +54,81 @@ export default function TaskInput({ tasks, lang, onSubmit }: Props) {
   }
 
   return (
-    <div className="px-4 sm:px-6 py-6">
-      <div className="max-w-3xl mx-auto bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-4">
-        <div className="relative">
+    <div className="px-4 sm:px-6 py-4">
+      <div className={`max-w-2xl mx-auto rounded-xl border bg-surface transition-all duration-200 ${
+        focused ? 'border-accent/40 shadow-[0_0_0_3px_rgba(99,102,241,0.08)]' : 'border shadow-sm'
+      }`}>
+        {/* Input row */}
+        <div className="flex items-start gap-2 px-3 py-2.5">
           <textarea
             ref={textareaRef}
             value={description}
             onChange={e => setDescription(e.target.value)}
             onKeyDown={handleKeyDown}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
             placeholder={t('input.placeholder', lang)}
-            rows={2}
-            className="w-full bg-transparent text-sm placeholder-gray-400 dark:placeholder-gray-500 outline-none resize-none pr-24"
+            rows={1}
+            className="flex-1 bg-transparent text-sm text-txt placeholder-txt-muted outline-none resize-none py-1 leading-relaxed"
           />
-          <div className="absolute right-0 bottom-0 flex items-center gap-1.5">
+          <div className="flex items-center gap-0.5 flex-shrink-0 pt-0.5">
             <button
               type="button"
               onClick={handleVoice}
-              className={`p-1.5 rounded-lg transition-colors ${listening ? 'bg-red-100 dark:bg-red-900 text-red-500' : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400'}`}
+              className={`p-1.5 rounded-lg transition-all duration-150 ${
+                listening ? 'bg-red-500/10 text-red-500' : 'hover:bg-surface-light text-txt-muted hover:text-txt-secondary'
+              }`}
               title="Voice input"
             >
-              🎤
+              <Mic size={15} />
             </button>
             <button
               type="button"
               onClick={handleSubmit}
               disabled={!description.trim() || submitting}
-              className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors"
+              className="p-1.5 rounded-lg bg-accent hover:bg-accent/90 disabled:opacity-30 disabled:cursor-not-allowed text-white transition-all duration-150"
             >
-              {submitting ? '...' : t('input.submit', lang)}
+              <Send size={15} />
             </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-4 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400">
-          <label className="flex items-center gap-1.5 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={planMode}
-              onChange={e => setPlanMode(e.target.checked)}
-              className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-            />
-            <span>{t('input.plan_mode', lang)}</span>
-          </label>
+        {/* Options bar */}
+        <div className="flex items-center gap-2 px-3 py-1.5 border-t text-[11px] text-txt-secondary">
+          <button
+            type="button"
+            onClick={() => setPlanMode(!planMode)}
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md transition-all duration-150 font-medium ${
+              planMode
+                ? 'bg-accent/10 text-accent'
+                : 'hover:bg-surface-light text-txt-muted'
+            }`}
+          >
+            <Sparkles size={12} />
+            <span>Plan</span>
+          </button>
 
-          <label className="flex items-center gap-1.5">
-            <span>{t('input.depends_on', lang)}:</span>
-            <select
-              value={dependsOn ?? ''}
-              onChange={e => setDependsOn(e.target.value || null)}
-              className="bg-transparent border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-0.5 text-xs outline-none"
-            >
-              <option value="">{t('input.depends_none', lang)}</option>
-              {dependableTasks.map(task => (
-                <option key={task.id} value={task.id}>
-                  [{task.id}] {task.title.slice(0, 30)}
-                </option>
-              ))}
-            </select>
-          </label>
+          {dependableTasks.length > 0 && (
+            <div className="inline-flex items-center gap-1">
+              <Link size={12} className="text-txt-muted" />
+              <select
+                value={dependsOn ?? ''}
+                onChange={e => setDependsOn(e.target.value || null)}
+                className="bg-transparent text-[11px] outline-none text-txt-secondary cursor-pointer hover:text-txt py-0.5"
+              >
+                <option value="">{t('input.depends_none', lang)}</option>
+                {dependableTasks.map(task => (
+                  <option key={task.id} value={task.id}>
+                    #{task.id} {task.title.slice(0, 25)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
-          <span className="ml-auto hidden sm:inline">{t('input.hint', lang)}</span>
+          <span className="ml-auto hidden sm:inline text-txt-muted text-[10px]">
+            {t('input.hint', lang)}
+          </span>
         </div>
       </div>
     </div>

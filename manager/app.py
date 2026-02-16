@@ -44,6 +44,9 @@ if _has_react:
     _assets_dir = _dist_dir / "assets"
     if _assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
+    _fonts_dir = _dist_dir / "fonts"
+    if _fonts_dir.exists():
+        app.mount("/fonts", StaticFiles(directory=str(_fonts_dir)), name="fonts")
 
 # Always mount legacy static for backwards compat (CSS/JS fallback)
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -90,13 +93,74 @@ async def remove_project(project_id: str):
     return JSONResponse(status_code=404, content={"error": "project not found"})
 
 
+@app.post("/api/projects/{project_id}/retry")
+async def retry_project(project_id: str):
+    project = dispatcher.get_project(project_id)
+    if not project:
+        return JSONResponse(status_code=404, content={"error": "project not found"})
+    if project.status != ProjectStatus.ERROR:
+        return JSONResponse(status_code=400, content={"error": "project is not in error state"})
+    if not project.repo_url:
+        return JSONResponse(status_code=400, content={"error": "project has no repo_url"})
+
+    # Clean up partial repo directory before retrying
+    import shutil
+    repo_dir = f"/app/data/projects/{project_id}/repo"
+    if os.path.islink(repo_dir):
+        os.unlink(repo_dir)
+    elif os.path.isdir(repo_dir):
+        shutil.rmtree(repo_dir)
+
+    # Reset status to cloning
+    dispatcher.update_project_status(project_id, ProjectStatus.CLONING)
+
+    # Re-trigger clone
+    asyncio.create_task(_clone_project_async(
+        project_id, project.repo_url, project.branch, project.source_type
+    ))
+    return {"status": "retrying"}
+
+
 async def _clone_project_async(project_id: str, repo_url: str, branch: str, source_type: str = "git"):
     """Background coroutine to clone a repo or symlink a local directory for a new project."""
     repo_dir = f"/app/data/projects/{project_id}/repo"
     try:
         loop = asyncio.get_event_loop()
 
-        if source_type == "local":
+        if source_type == "new":
+            # New repo mode: create a fresh git repo
+            os.makedirs(repo_dir, exist_ok=True)
+            await loop.run_in_executor(None, lambda: subprocess.run(
+                ["git", "init", "-b", "main"], capture_output=True, text=True, timeout=30, cwd=repo_dir,
+            ))
+            await loop.run_in_executor(None, lambda: subprocess.run(
+                ["git", "config", "user.name", "Claude Worker"],
+                capture_output=True, text=True, timeout=10, cwd=repo_dir,
+            ))
+            await loop.run_in_executor(None, lambda: subprocess.run(
+                ["git", "config", "user.email", "claude@parallel.dev"],
+                capture_output=True, text=True, timeout=10, cwd=repo_dir,
+            ))
+            # Inject CLAUDE.md and PROGRESS.md
+            template = "/app/claude-md-template.md"
+            claude_md = os.path.join(repo_dir, "CLAUDE.md")
+            if os.path.exists(template):
+                import shutil as _sh
+                _sh.copy2(template, claude_md)
+            progress_md = os.path.join(repo_dir, "PROGRESS.md")
+            with open(progress_md, "w") as f:
+                f.write("# Development Progress\n\nAutomatically maintained by Claude workers.\n\n---\n")
+            # Initial commit with files
+            await loop.run_in_executor(None, lambda: subprocess.run(
+                ["git", "add", "."], capture_output=True, text=True, timeout=10, cwd=repo_dir,
+            ))
+            await loop.run_in_executor(None, lambda: subprocess.run(
+                ["git", "commit", "-m", "Initial commit"],
+                capture_output=True, text=True, timeout=30, cwd=repo_dir,
+            ))
+            dispatcher.update_project_status(project_id, ProjectStatus.READY)
+
+        elif source_type == "local":
             # Local mode: symlink to the local path
             local_path = repo_url  # repo_url stores the local path in local mode
             if not os.path.isdir(local_path):

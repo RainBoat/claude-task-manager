@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { X, Check, MessageSquare, Mic } from 'lucide-react'
 import type { Task } from '../types'
 import type { Lang } from '../i18n'
 import { t } from '../i18n'
@@ -12,17 +13,16 @@ interface Props {
   onClose: () => void
 }
 
-/** Simple markdown-ish rendering: headings, bold, code blocks, lists */
 function renderMarkdown(text: string): string {
   return text
-    .replace(/^### (.+)$/gm, '<h3 class="text-base font-semibold mt-4 mb-1">$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2 class="text-lg font-semibold mt-5 mb-2">$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1 class="text-xl font-bold mt-6 mb-2">$1</h1>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-sm">$1</code>')
-    .replace(/^```(\w*)\n([\s\S]*?)^```/gm, '<pre class="bg-gray-100 dark:bg-gray-800 rounded-lg p-3 my-2 overflow-x-auto text-sm"><code>$2</code></pre>')
-    .replace(/^- (.+)$/gm, '<li class="ml-4 list-disc text-sm">$1</li>')
-    .replace(/^\d+\. (.+)$/gm, '<li class="ml-4 list-decimal text-sm">$1</li>')
+    .replace(/^### (.+)$/gm, '<h3 class="text-sm font-semibold mt-3 mb-1 text-txt">$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2 class="text-base font-semibold mt-4 mb-1.5 text-txt">$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1 class="text-lg font-bold mt-5 mb-2 text-txt">$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong class="font-semibold text-txt">$1</strong>')
+    .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 bg-surface-light rounded text-[12px] text-accent font-mono">$1</code>')
+    .replace(/^```(\w*)\n([\s\S]*?)^```/gm, '<pre class="bg-surface-light rounded-lg p-3 my-2 overflow-x-auto text-[12px] border font-mono"><code>$2</code></pre>')
+    .replace(/^- (.+)$/gm, '<li class="ml-4 list-disc text-[13px] text-txt-secondary leading-relaxed">$1</li>')
+    .replace(/^\d+\. (.+)$/gm, '<li class="ml-4 list-decimal text-[13px] text-txt-secondary leading-relaxed">$1</li>')
     .replace(/\n{2,}/g, '<br/><br/>')
     .replace(/\n/g, '<br/>')
 }
@@ -49,53 +49,52 @@ export default function PlanModal({ task, lang, onApprove, onReject, onClose }: 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col mx-4"
+        className="bg-surface rounded-xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col mx-4 border animate-scale-in"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-between px-5 py-3 border-b border">
           <div>
-            <h2 className="text-lg font-semibold">{t('plan.title', lang)}</h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">#{task.id} — {task.title}</p>
+            <h2 className="text-sm font-semibold text-txt">{t('plan.title', lang)}</h2>
+            <p className="text-[11px] text-txt-muted mt-0.5 font-mono">#{task.id} — {task.title}</p>
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 text-xl">
-            ✕
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-light text-txt-muted hover:text-txt transition-all duration-150">
+            <X size={16} />
           </button>
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-          {/* Plan text */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
           {task.plan ? (
             <div
-              className="prose prose-sm dark:prose-invert max-w-none"
+              className="max-w-none text-[13px] text-txt-secondary leading-relaxed"
               dangerouslySetInnerHTML={{ __html: renderMarkdown(task.plan) }}
             />
           ) : (
-            <div className="flex items-center justify-center py-12 text-gray-400">
-              <div className="animate-spin mr-2 w-5 h-5 border-2 border-gray-300 border-t-indigo-500 rounded-full" />
+            <div className="flex items-center justify-center py-12 text-txt-muted text-sm">
+              <div className="animate-spin mr-2 w-4 h-4 border-2 border-surface-lighter border-t-accent rounded-full" />
               {t('plan.generating', lang)}
             </div>
           )}
 
           {/* Questions */}
           {questions.length > 0 && (
-            <div className="bg-blue-50 dark:bg-blue-900/20 rounded-2xl p-6 space-y-4">
-              <h3 className="text-sm font-semibold text-blue-800 dark:text-blue-300">
+            <div className="bg-accent/5 rounded-lg p-4 space-y-3 border border-accent/10">
+              <h3 className="text-xs font-semibold text-accent uppercase tracking-wider">
                 {t('plan.questions_title', lang)}
               </h3>
               {questions.map(q => (
-                <div key={q.key} className="space-y-2">
-                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300">{q.question}</p>
-                  <div className="flex flex-wrap gap-2">
+                <div key={q.key} className="space-y-1.5">
+                  <p className="text-[13px] font-medium text-txt-secondary">{q.question}</p>
+                  <div className="flex flex-wrap gap-1.5">
                     {q.options.map(opt => (
                       <button
                         key={opt}
                         onClick={() => selectAnswer(q.key, opt)}
-                        className={`rounded-full px-4 py-2 text-sm transition-colors ${
+                        className={`rounded-md px-3 py-1.5 text-xs font-mono transition-all duration-150 ${
                           answers[q.key] === opt
-                            ? 'bg-blue-500 text-white shadow-sm'
-                            : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                            ? 'bg-accent text-white shadow-sm'
+                            : 'bg-surface-light text-txt-secondary border hover:bg-surface-lighter'
                         }`}
                       >
                         {opt}
@@ -114,48 +113,50 @@ export default function PlanModal({ task, lang, onApprove, onReject, onClose }: 
                 value={feedback}
                 onChange={e => setFeedback(e.target.value)}
                 placeholder="Enter your feedback..."
-                rows={4}
-                className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-3 pr-10 text-sm outline-none focus:ring-2 focus:ring-purple-400"
+                rows={3}
+                className="w-full rounded-lg border bg-surface-deep p-3 pr-10 text-sm text-txt outline-none focus:border-accent/40 focus:ring-2 focus:ring-accent/10 font-mono transition-all duration-150"
               />
               <button
                 type="button"
                 onClick={startFeedbackVoice}
-                className={`absolute right-2 top-2 p-1.5 rounded-lg transition-colors ${feedbackListening ? 'bg-red-100 dark:bg-red-900 text-red-500' : 'hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400'}`}
-                title="Voice input"
+                className={`absolute right-2 top-2 p-1 rounded-md transition-all duration-150 ${feedbackListening ? 'bg-red-500/10 text-red-400' : 'hover:bg-surface-light text-txt-muted'}`}
               >
-                🎤
+                <Mic size={14} />
               </button>
             </div>
           )}
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border">
           <button
             onClick={onClose}
-            className="px-5 py-2.5 rounded-xl border border-gray-300 dark:border-gray-600 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+            className="px-3 py-1.5 rounded-lg text-xs text-txt-secondary hover:bg-surface-light transition-all duration-150"
           >
             {t('plan.close', lang)}
           </button>
           {feedbackMode ? (
             <button
               onClick={() => { onReject(feedback); setFeedbackMode(false) }}
-              className="px-5 py-2.5 rounded-xl bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 text-sm font-medium hover:bg-purple-200 dark:hover:bg-purple-800 transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-500/10 text-violet-600 dark:text-violet-400 hover:bg-violet-500/20 transition-all duration-150"
             >
+              <MessageSquare size={13} />
               {t('plan.feedback', lang)}
             </button>
           ) : (
             <button
               onClick={() => setFeedbackMode(true)}
-              className="px-5 py-2.5 rounded-xl bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 text-sm font-medium hover:bg-purple-200 dark:hover:bg-purple-800 transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-500/10 text-violet-600 dark:text-violet-400 hover:bg-violet-500/20 transition-all duration-150"
             >
+              <MessageSquare size={13} />
               {t('plan.feedback', lang)}
             </button>
           )}
           <button
             onClick={() => onApprove(answers)}
-            className="px-5 py-2.5 rounded-xl bg-green-500 hover:bg-green-600 text-white text-sm font-medium shadow-sm transition-colors"
+            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-medium bg-emerald-500 hover:bg-emerald-600 text-white shadow-sm transition-all duration-150"
           >
+            <Check size={13} />
             {t('plan.approve', lang)}
           </button>
         </div>

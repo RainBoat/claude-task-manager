@@ -99,32 +99,42 @@ while true; do
     fi
 
     # --- 5. Build prompt ---
-    PROMPT="You are working on task: ${TASK_TITLE}
+    # Get project name for context
+    PROJECT_NAME=$(python3 "$CLAIM_SCRIPT" get-project-name "$PROJECT_ID" 2>/dev/null) || PROJECT_NAME="$PROJECT_ID"
+
+    PROMPT="## Context
+You are working on the project \"${PROJECT_NAME}\".
+Your working directory is: ${WORKTREE_DIR}
+You must ONLY create and modify files inside this directory. Do NOT create files in /app or any other directory outside your working directory.
+
+## Task: ${TASK_TITLE}
 
 Description: ${TASK_DESC}"
 
     if [ -n "$TASK_PLAN" ]; then
         PROMPT="${PROMPT}
 
-Approved Plan (follow this plan):
+## Approved Plan (follow this plan):
 ${TASK_PLAN}"
     fi
 
     if [ -n "$EXPERIENCE" ]; then
         PROMPT="${PROMPT}
 
-Historical Experience (learn from past tasks — avoid repeating mistakes):
+## Historical Experience (learn from past tasks — avoid repeating mistakes):
 ${EXPERIENCE}"
     fi
 
     PROMPT="${PROMPT}
 
-Instructions:
+## Instructions
 1. Review the historical experience above (if any) for relevant lessons before starting.
-2. Implement the changes described above.
-3. Make sure all changes are correct and complete.
-4. Stage and commit your changes with a descriptive commit message.
-5. Do NOT push — the CI system will handle that."
+2. First explore the project structure to understand the codebase before making changes.
+3. Implement the changes described above — all new files and modifications must be within your working directory (${WORKTREE_DIR}).
+4. Make sure all changes are correct and complete.
+5. Stage and commit your changes with a descriptive commit message.
+6. Do NOT push — the CI system will handle that.
+7. Do NOT modify any files outside your working directory. If the task seems to require changes to a different system, implement it within this project's codebase instead."
 
     echo "[${WORKER_ID}] Running Claude Code in ${WORKTREE_DIR}..."
 

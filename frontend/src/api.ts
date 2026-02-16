@@ -27,6 +27,14 @@ export async function deleteProject(projectId: string): Promise<void> {
   if (!res.ok) throw new Error('Failed to delete project')
 }
 
+export async function retryProject(projectId: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/projects/${projectId}/retry`, { method: 'POST' })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.error || 'Failed to retry project')
+  }
+}
+
 // ============================================================
 // Tasks (project-scoped)
 // ============================================================

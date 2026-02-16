@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { ChevronUp, ChevronDown } from 'lucide-react'
 import type { Worker } from '../types'
 import type { Lang } from '../i18n'
 import { useWorkerLogs } from '../hooks/useWorkerLogs'
@@ -27,20 +28,19 @@ export default function WorkerStatusBar({ workers, lang, onViewFullLog }: Props)
   if (workers.length === 0) return null
 
   return (
-    <div
-      className="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 flex flex-col"
-      style={{ height: expanded ? 220 : 36 }}
+    <div className="flex-shrink-0 border-t border bg-surface flex flex-col transition-all duration-200"
+      style={{ height: expanded ? 240 : 40 }}
     >
       {/* Chip bar */}
-      <div className="flex items-center h-9 px-2 gap-1 flex-shrink-0 overflow-x-auto">
+      <div className="flex items-center h-10 px-3 gap-1.5 flex-shrink-0 overflow-x-auto">
         <button
           onClick={() => setExpanded(v => !v)}
-          className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-xs flex-shrink-0"
+          className="p-1 rounded-md text-txt-muted hover:text-txt-secondary hover:bg-surface-light flex-shrink-0 transition-all duration-150"
           title={expanded ? 'Collapse' : 'Expand'}
         >
-          {expanded ? '▼' : '▲'}
+          {expanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
         </button>
-        <div className="w-px h-4 bg-gray-300 dark:bg-gray-600 flex-shrink-0" />
+        <div className="w-px h-4 bg-surface-lighter flex-shrink-0" />
         {workers.map((w, i) => (
           <WorkerChip
             key={w.id}
@@ -56,7 +56,7 @@ export default function WorkerStatusBar({ workers, lang, onViewFullLog }: Props)
 
       {/* Expanded activity feed */}
       {expanded && (
-        <div className="flex-1 border-t border-gray-200 dark:border-gray-700 min-h-0 flex flex-col">
+        <div className="flex-1 border-t border min-h-0 flex flex-col bg-surface-deep">
           <ActivityFeed
             entries={entries}
             selectedWorkerId={selectedWorkerId}

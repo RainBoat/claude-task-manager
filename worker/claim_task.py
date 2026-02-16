@@ -35,6 +35,10 @@ def main():
     update_p.add_argument("--commit", default=None)
     update_p.add_argument("--branch", default=None)
 
+    # get-project-name — return project name
+    name_p = sub.add_parser("get-project-name", help="Get project name")
+    name_p.add_argument("project_id", help="Project ID")
+
     # get-settings — return project merge/push settings
     settings_p = sub.add_parser("get-settings", help="Get project settings")
     settings_p.add_argument("project_id", help="Project ID")
@@ -67,6 +71,15 @@ def main():
             sys.exit(0)
         else:
             print(f"Task {args.task_id} not found in project {args.project_id}", file=sys.stderr)
+            sys.exit(1)
+
+    elif args.command == "get-project-name":
+        project = get_project(args.project_id)
+        if project:
+            print(project.name)
+            sys.exit(0)
+        else:
+            print(args.project_id)
             sys.exit(1)
 
     elif args.command == "get-settings":

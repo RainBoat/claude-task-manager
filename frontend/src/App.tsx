@@ -61,7 +61,7 @@ export default function App() {
   const toggleLang = useCallback(() => setLang(l => l === 'zh' ? 'en' : 'zh'), [])
 
   // Project handlers
-  const handleAddProject = useCallback(async (name: string, repoUrl: string, branch: string, sourceType: 'git' | 'local' = 'git') => {
+  const handleAddProject = useCallback(async (name: string, repoUrl: string, branch: string, sourceType: 'git' | 'local' | 'new' = 'git') => {
     await createProject({ name, repo_url: repoUrl, branch, source_type: sourceType })
     await refreshProjects()
   }, [refreshProjects])
@@ -152,7 +152,7 @@ export default function App() {
   }, [activeProjectId, planPendingTasks, refreshTasks])
 
   return (
-    <div className="h-screen flex flex-col">
+    <div className="h-screen flex flex-col bg-surface-deep text-txt font-sans">
       {/* Header — full width */}
       <Header
         taskCount={tasks.length}
@@ -194,7 +194,7 @@ export default function App() {
                 <div className="px-4 sm:px-6 -mt-2 mb-2">
                   <button
                     onClick={() => setShowBatchReview(true)}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-800 transition-colors"
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium font-mono bg-violet-500/15 text-violet-300 border border-violet-500/20 hover:bg-violet-500/25 transition-all duration-200"
                   >
                     {lang === 'zh'
                       ? `批量审批 ${planPendingTasks.length} 个 Plan`
@@ -214,7 +214,7 @@ export default function App() {
               />
             </>
           ) : (
-            <div className="flex-1 flex items-center justify-center text-gray-400 dark:text-gray-600 text-sm">
+            <div className="flex-1 flex items-center justify-center text-txt-muted text-sm font-mono">
               {projects.length === 0
                 ? lang === 'zh' ? '点击左侧 "+ 添加项目" 开始' : 'Click "+ Add Project" to get started'
                 : lang === 'zh' ? '请选择一个项目' : 'Select a project'}

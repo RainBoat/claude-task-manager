@@ -9,21 +9,21 @@ interface Props {
   lang: Lang
 }
 
-function formatEntry(entry: FeedEntry): string {
+function formatEntry(entry: FeedEntry): { prefix: string; body: string } {
   const ts = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : ''
-  const prefix = `[W${entry.workerIndex}] ${ts}`
-  if (entry.type === 'assistant' && entry.message) return `${prefix} [assistant] ${entry.message}`
-  if (entry.type === 'tool_use') return `${prefix} [tool] ${entry.tool ?? ''}: ${entry.message ?? ''}`
-  if (entry.type === 'tool_result') return `${prefix} [result] ${(entry.message ?? '').slice(0, 200)}`
-  if (entry.type === 'error') return `${prefix} [ERROR] ${entry.error ?? entry.message ?? ''}`
-  return `${prefix} [${entry.type}] ${entry.message ?? ''}`
+  const prefix = `W${entry.workerIndex} ${ts}`
+  if (entry.type === 'assistant' && entry.message) return { prefix, body: entry.message }
+  if (entry.type === 'tool_use') return { prefix, body: `→ ${entry.tool ?? ''} ${entry.message ?? ''}` }
+  if (entry.type === 'tool_result') return { prefix, body: `← ${(entry.message ?? '').slice(0, 200)}` }
+  if (entry.type === 'error') return { prefix, body: `✗ ${entry.error ?? entry.message ?? ''}` }
+  return { prefix, body: entry.message ?? '' }
 }
 
 const typeColor: Record<string, string> = {
-  error: 'text-red-400',
-  tool_use: 'text-cyan-400',
-  tool_result: 'text-gray-500',
-  assistant: 'text-gray-300',
+  error: 'text-red-500 dark:text-red-400',
+  tool_use: 'text-accent',
+  tool_result: 'text-txt-muted',
+  assistant: 'text-txt-secondary',
 }
 
 export default function ActivityFeed({ entries, selectedWorkerId, lang }: Props) {
@@ -38,17 +38,21 @@ export default function ActivityFeed({ entries, selectedWorkerId, lang }: Props)
     : entries
 
   return (
-    <div className="flex-1 overflow-y-auto px-3 py-2 font-mono text-xs space-y-0.5 min-h-0">
+    <div className="flex-1 overflow-y-auto px-3 py-2 font-mono text-[11px] space-y-px min-h-0">
       {filtered.length === 0 && (
-        <p className="text-gray-500 dark:text-gray-500 text-center py-4">
+        <p className="text-txt-muted text-center py-4 text-xs">
           {t('workers.no_activity', lang)}
         </p>
       )}
-      {filtered.map((entry, i) => (
-        <div key={i} className={`leading-relaxed ${typeColor[entry.type] ?? 'text-gray-400'}`}>
-          {formatEntry(entry)}
-        </div>
-      ))}
+      {filtered.map((entry, i) => {
+        const { prefix, body } = formatEntry(entry)
+        return (
+          <div key={i} className={`leading-relaxed flex gap-2 py-px ${typeColor[entry.type] ?? 'text-txt-muted'}`}>
+            <span className="text-txt-muted flex-shrink-0 w-[90px] text-right">{prefix}</span>
+            <span className="truncate" title={body}>{body}</span>
+          </div>
+        )
+      })}
       <div ref={bottomRef} />
     </div>
   )

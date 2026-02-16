@@ -53,7 +53,7 @@ export function useWorkerLogs(workers: Worker[]) {
             workerIndex: idx,
             type: data.type,
             timestamp: data.timestamp,
-            message: data.message,
+            message: data.message ?? data.text,
             tool: data.tool,
             error: data.error,
           }

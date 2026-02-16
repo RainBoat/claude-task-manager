@@ -14,13 +14,13 @@ const COLUMNS: KanbanColumn[] = [
 ]
 
 const tabColors: Record<string, string> = {
-  gray: 'border-gray-400 text-gray-600 dark:text-gray-400',
-  blue: 'border-blue-500 text-blue-600 dark:text-blue-400',
-  purple: 'border-purple-500 text-purple-600 dark:text-purple-400',
-  green: 'border-green-500 text-green-600 dark:text-green-400',
-  red: 'border-red-500 text-red-600 dark:text-red-400',
-  amber: 'border-amber-500 text-amber-600 dark:text-amber-400',
-  slate: 'border-slate-400 text-slate-600 dark:text-slate-400',
+  gray: 'border-gray-400 text-gray-400',
+  blue: 'border-blue-400 text-blue-400',
+  purple: 'border-violet-400 text-violet-400',
+  green: 'border-emerald-400 text-emerald-400',
+  red: 'border-red-400 text-red-400',
+  amber: 'border-amber-400 text-amber-400',
+  slate: 'border-gray-500 text-gray-500',
 }
 
 interface Props {
@@ -43,7 +43,7 @@ export default function KanbanBoard({ tasks, lang, onClickTask, onRetry, onCance
     <>
       {/* Mobile: tab bar + single column */}
       <div className="md:hidden flex flex-col flex-1 overflow-hidden">
-        <div className="flex overflow-x-auto px-2 py-2 gap-1 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+        <div className="flex overflow-x-auto px-2 py-2 gap-1 border-b border flex-shrink-0">
           {COLUMNS.map(col => {
             const count = getCount(col)
             const active = mobileTab === col.key
@@ -52,10 +52,10 @@ export default function KanbanBoard({ tasks, lang, onClickTask, onRetry, onCance
               <button
                 key={col.key}
                 onClick={() => setMobileTab(col.key)}
-                className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${
+                className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium font-mono transition-all duration-200 whitespace-nowrap ${
                   active
-                    ? `${tabColors[col.color] || ''} bg-gray-100 dark:bg-gray-800 border-b-2`
-                    : 'text-gray-500 dark:text-gray-400 border-b-2 border-transparent'
+                    ? `${tabColors[col.color] || ''} bg-surface-lighter border-b-2`
+                    : 'text-txt-muted border-b-2 border-transparent'
                 }`}
               >
                 {label} {count > 0 && <span className="ml-1 opacity-70">({count})</span>}
@@ -69,7 +69,7 @@ export default function KanbanBoard({ tasks, lang, onClickTask, onRetry, onCance
             return (
               <div key={col.key} className="space-y-2.5">
                 {colTasks.length === 0 && (
-                  <p className="text-center text-xs text-gray-400 dark:text-gray-600 py-8">
+                  <p className="text-center text-xs text-txt-muted py-8 font-mono">
                     {lang === 'zh' ? '暂无任务' : 'No tasks'}
                   </p>
                 )}

@@ -2,13 +2,22 @@
 
 You are an autonomous Claude Code worker in a parallel development system.
 
+## CRITICAL: Working Directory Constraint
+
+**You must ONLY create and modify files within your current working directory.**
+- Do NOT create files in `/app`, `/tmp`, or any path outside your working directory.
+- Do NOT modify the parallel development system itself (no changes to `manager/`, `worker/`, `frontend/` under `/app`).
+- If a task description seems ambiguous, implement the feature within THIS project's codebase.
+- Before creating any file, verify the path is relative to your current working directory.
+
 ## Task Lifecycle
 
 1. You receive a task with a title, description, and optionally an approved plan.
 2. If a plan is provided, follow it closely.
-3. Implement the changes in this worktree.
-4. Stage and commit all changes with a descriptive commit message.
-5. Do NOT push — the orchestration system handles merging, testing, and pushing.
+3. **First explore the project structure** — run `ls`, read key files, understand the tech stack before writing code.
+4. Implement the changes in this worktree.
+5. Stage and commit all changes with a descriptive commit message.
+6. Do NOT push — the orchestration system handles merging, testing, and pushing.
 
 ## Code Conventions
 
@@ -22,6 +31,7 @@ You are an autonomous Claude Code worker in a parallel development system.
 
 - Do NOT run `git push` or `git merge`.
 - Do NOT modify files outside the scope of your task.
+- Do NOT create files outside your current working directory.
 - Do NOT install new dependencies unless the task requires it.
 - Do NOT delete or rename existing tests unless replacing them.
 - Do NOT modify this CLAUDE.md file.

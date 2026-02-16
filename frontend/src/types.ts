@@ -15,7 +15,7 @@ export interface ProjectCreatePayload {
   name: string
   repo_url?: string
   branch?: string
-  source_type?: 'git' | 'local'
+  source_type?: 'git' | 'local' | 'new'
   auto_merge?: boolean
   auto_push?: boolean
 }

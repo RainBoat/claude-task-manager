@@ -1,5 +1,7 @@
 const zh: Record<string, string> = {
   'app.title': 'Claude Code 任务管理中心',
+  'app.title_prefix': 'Claude Code',
+  'app.title_suffix': '任务管理中心',
   'app.subtitle_prefix': '共',
   'app.subtitle_suffix': '个任务',
   'col.backlog': '待开发',
@@ -50,6 +52,7 @@ const zh: Record<string, string> = {
   'project.confirm': '添加',
   'project.name_placeholder': 'my-project',
   'project.url_placeholder': 'https://github.com/org/repo.git',
+  'project.source_new': '新建仓库',
   // Workers
   'workers.title': 'Workers',
   'workers.idle': '空闲',
@@ -60,10 +63,19 @@ const zh: Record<string, string> = {
   'workers.no_activity': '暂无活动',
   'workers.view_full_log': '查看完整日志',
   'workers.activity': '实时活动',
+  // Project status
+  'project.status_cloning': '克隆中...',
+  'project.status_ready': '就绪',
+  'project.status_error': '错误',
+  'project.error_label': '错误信息',
+  'project.retry': '重试',
+  'project.retrying': '重试中...',
 }
 
 const en: Record<string, string> = {
   'app.title': 'Claude Code Task Manager',
+  'app.title_prefix': 'Claude Code',
+  'app.title_suffix': 'Task Manager',
   'app.subtitle_prefix': '',
   'app.subtitle_suffix': ' tasks',
   'col.backlog': 'Backlog',
@@ -114,6 +126,7 @@ const en: Record<string, string> = {
   'project.confirm': 'Add',
   'project.name_placeholder': 'my-project',
   'project.url_placeholder': 'https://github.com/org/repo.git',
+  'project.source_new': 'New Repo',
   // Workers
   'workers.title': 'Workers',
   'workers.idle': 'Idle',
@@ -124,6 +137,13 @@ const en: Record<string, string> = {
   'workers.no_activity': 'No activity yet',
   'workers.view_full_log': 'View Full Log',
   'workers.activity': 'Live Activity',
+  // Project status
+  'project.status_cloning': 'Cloning...',
+  'project.status_ready': 'Ready',
+  'project.status_error': 'Error',
+  'project.error_label': 'Error',
+  'project.retry': 'Retry',
+  'project.retrying': 'Retrying...',
 }
 
 const langs = { zh, en } as const

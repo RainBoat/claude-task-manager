@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
+import { Plus, Trash2, RotateCcw, Upload, Settings, Menu, X, Loader2 } from 'lucide-react'
 import type { Project } from '../types'
 import type { Lang } from '../i18n'
 import { t } from '../i18n'
-import { updateProjectSettings, pushProject, fetchUnpushed } from '../api'
+import { updateProjectSettings, pushProject, fetchUnpushed, retryProject } from '../api'
 
 interface Props {
   projects: Project[]
@@ -17,8 +18,8 @@ interface Props {
 }
 
 const statusColors: Record<string, string> = {
-  cloning: 'bg-yellow-400',
-  ready: 'bg-green-400',
+  cloning: 'bg-amber-400',
+  ready: 'bg-emerald-400',
   error: 'bg-red-400',
 }
 
@@ -27,8 +28,21 @@ export default function Sidebar({ projects, activeProjectId, lang, open, onToggl
   const [unpushedCount, setUnpushedCount] = useState(0)
   const [hasRemote, setHasRemote] = useState(false)
   const [pushing, setPushing] = useState(false)
+  const [retrying, setRetrying] = useState(false)
 
-  // Poll unpushed count for active project
+  const handleRetry = async (projectId: string) => {
+    if (retrying) return
+    setRetrying(true)
+    try {
+      await retryProject(projectId)
+      onProjectUpdated()
+    } catch (e: any) {
+      alert(e.message || 'Retry failed')
+    } finally {
+      setRetrying(false)
+    }
+  }
+
   useEffect(() => {
     if (!activeProjectId) return
     let cancelled = false
@@ -70,47 +84,40 @@ export default function Sidebar({ projects, activeProjectId, lang, open, onToggl
 
   return (
     <>
-      {/* Mobile hamburger button */}
+      {/* Mobile hamburger */}
       <button
         onClick={onToggle}
-        className="md:hidden fixed top-3 left-3 z-50 p-2 rounded-lg bg-gray-900/80 text-white backdrop-blur-sm"
+        className="md:hidden fixed top-2.5 left-3 z-50 p-2 rounded-lg bg-surface/90 backdrop-blur-sm border text-txt-secondary hover:text-txt transition-all duration-150"
         aria-label="Toggle sidebar"
       >
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          {open
-            ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-          }
-        </svg>
+        {open ? <X size={18} /> : <Menu size={18} />}
       </button>
 
-      {/* Backdrop for mobile */}
+      {/* Mobile backdrop */}
       {open && (
-        <div
-          className="md:hidden fixed inset-0 z-30 bg-black/40 backdrop-blur-sm"
-          onClick={onToggle}
-        />
+        <div className="md:hidden fixed inset-0 z-30 bg-black/40 backdrop-blur-sm" onClick={onToggle} />
       )}
 
       {/* Sidebar */}
       <aside className={`
         fixed md:relative z-40 h-full
-        w-60 flex-shrink-0 bg-gray-900 dark:bg-gray-950 text-gray-100 flex flex-col
-        transition-transform duration-200 ease-in-out
+        w-56 flex-shrink-0 bg-surface-deep text-txt flex flex-col
+        border-r border
+        transition-transform duration-200 ease-out
         ${open ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
       `}>
-        {/* Logo */}
-        <div className="px-4 py-4 flex items-center gap-2.5 border-b border-gray-800">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center text-white font-bold text-sm shadow">
+        {/* Brand */}
+        <div className="px-3 h-12 flex items-center gap-2 border-b border">
+          <div className="w-6 h-6 rounded-md bg-accent flex items-center justify-center text-white font-bold text-[11px]">
             C
           </div>
-          <span className="font-semibold text-sm tracking-tight">Claude Dev</span>
+          <span className="font-semibold text-sm tracking-tight text-txt">Claude Dev</span>
         </div>
 
         {/* Project list */}
-        <nav className="flex-1 overflow-y-auto py-2">
+        <nav className="flex-1 overflow-y-auto py-1">
           {projects.length === 0 && (
-            <p className="px-4 py-6 text-xs text-gray-500 text-center">{t('sidebar.no_projects', lang)}</p>
+            <p className="px-3 py-8 text-xs text-txt-muted text-center">{t('sidebar.no_projects', lang)}</p>
           )}
           {projects.map(p => {
             const active = p.id === activeProjectId
@@ -118,100 +125,134 @@ export default function Sidebar({ projects, activeProjectId, lang, open, onToggl
               <div
                 key={p.id}
                 onClick={() => { onSelect(p.id); onToggle() }}
-                className={`group flex items-center gap-2.5 px-4 py-2.5 cursor-pointer transition-colors text-sm ${
+                className={`group flex items-center gap-2 mx-1.5 px-2.5 py-2 rounded-lg cursor-pointer transition-all duration-150 text-[13px] ${
                   active
-                    ? 'bg-indigo-600/20 border-l-2 border-indigo-500 text-white'
-                    : 'border-l-2 border-transparent hover:bg-gray-800/60 text-gray-300 hover:text-white'
+                    ? 'bg-accent/8 text-txt'
+                    : 'hover:bg-surface-light text-txt-secondary hover:text-txt'
                 }`}
               >
-                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusColors[p.status] || 'bg-gray-500'}`} />
-                <span className="truncate flex-1">{p.name}</span>
+                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusColors[p.status] || 'bg-zinc-400'} ${p.status === 'cloning' ? 'animate-pulse' : ''}`} />
+                <span className="truncate flex-1 font-mono text-xs">{p.name}</span>
                 {p.source_type === 'local' && (
-                  <span className="text-[9px] px-1 py-0.5 rounded bg-gray-700 text-gray-400 flex-shrink-0">local</span>
+                  <span className="text-[9px] px-1 py-px rounded bg-surface-lighter text-txt-muted font-mono flex-shrink-0">local</span>
+                )}
+                {p.status === 'cloning' && (
+                  <Loader2 size={12} className="animate-spin text-amber-400 flex-shrink-0" />
+                )}
+                {p.status === 'error' && (
+                  <button
+                    onClick={e => { e.stopPropagation(); handleRetry(p.id) }}
+                    className="text-[10px] p-0.5 rounded text-red-400 hover:bg-red-500/10 transition-all duration-150 flex-shrink-0"
+                  >
+                    <RotateCcw size={12} />
+                  </button>
                 )}
                 <button
                   onClick={e => {
                     e.stopPropagation()
                     if (confirm(t('sidebar.delete_confirm', lang))) onDelete(p.id)
                   }}
-                  className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 transition-opacity text-xs p-0.5"
-                  title="Delete"
+                  className="opacity-0 group-hover:opacity-100 text-txt-muted hover:text-red-400 transition-all duration-150 p-0.5 rounded hover:bg-red-500/10 flex-shrink-0"
                 >
-                  ✕
+                  <Trash2 size={12} />
                 </button>
               </div>
             )
           })}
         </nav>
 
-        {/* Project settings (when a project is selected) */}
+        {/* Settings panel */}
         {activeProject && activeProject.status === 'ready' && (
-          <div className="px-3 py-3 border-t border-gray-800 space-y-2">
-            <p className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">
-              {lang === 'zh' ? '项目设置' : 'Settings'}
-            </p>
+          <div className="px-3 py-3 border-t border space-y-2.5">
+            <div className="flex items-center gap-1.5 text-[10px] text-txt-muted uppercase tracking-wider font-medium">
+              <Settings size={10} />
+              <span>{lang === 'zh' ? '设置' : 'Settings'}</span>
+            </div>
 
-            {/* Auto merge toggle */}
             <label className="flex items-center justify-between cursor-pointer">
-              <span className="text-xs text-gray-400">
-                {lang === 'zh' ? '自动合并' : 'Auto Merge'}
-              </span>
+              <span className="text-[11px] text-txt-secondary">{lang === 'zh' ? '自动合并' : 'Auto Merge'}</span>
               <button
                 onClick={() => handleToggleSetting('auto_merge', !activeProject.auto_merge)}
-                className={`relative w-8 h-4.5 rounded-full transition-colors ${
-                  activeProject.auto_merge ? 'bg-indigo-500' : 'bg-gray-600'
+                className={`relative w-7 h-4 rounded-full transition-all duration-200 ${
+                  activeProject.auto_merge ? 'bg-accent' : 'bg-surface-lighter'
                 }`}
               >
-                <span className={`absolute top-0.5 left-0.5 w-3.5 h-3.5 rounded-full bg-white transition-transform ${
-                  activeProject.auto_merge ? 'translate-x-3.5' : ''
+                <span className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                  activeProject.auto_merge ? 'translate-x-3' : ''
                 }`} />
               </button>
             </label>
 
-            {/* Auto push toggle */}
             <label className="flex items-center justify-between cursor-pointer">
-              <span className="text-xs text-gray-400">
-                {lang === 'zh' ? '自动推送' : 'Auto Push'}
-              </span>
+              <span className="text-[11px] text-txt-secondary">{lang === 'zh' ? '自动推送' : 'Auto Push'}</span>
               <button
                 onClick={() => handleToggleSetting('auto_push', !activeProject.auto_push)}
-                className={`relative w-8 h-4.5 rounded-full transition-colors ${
-                  activeProject.auto_push ? 'bg-indigo-500' : 'bg-gray-600'
+                className={`relative w-7 h-4 rounded-full transition-all duration-200 ${
+                  activeProject.auto_push ? 'bg-accent' : 'bg-surface-lighter'
                 }`}
               >
-                <span className={`absolute top-0.5 left-0.5 w-3.5 h-3.5 rounded-full bg-white transition-transform ${
-                  activeProject.auto_push ? 'translate-x-3.5' : ''
+                <span className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                  activeProject.auto_push ? 'translate-x-3' : ''
                 }`} />
               </button>
             </label>
 
-            {/* Push button — only show when there's a remote */}
             {hasRemote && (
               <button
                 onClick={handlePush}
                 disabled={pushing || unpushedCount === 0}
-                className="w-full mt-1 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white"
+                className="w-full py-1.5 rounded-lg text-[11px] font-medium transition-all duration-150 flex items-center justify-center gap-1.5 bg-accent hover:bg-accent/90 disabled:opacity-30 disabled:cursor-not-allowed text-white"
               >
-                {pushing ? (lang === 'zh' ? '推送中...' : 'Pushing...') : (
-                  <>
-                    Push
-                    {unpushedCount > 0 && (
-                      <span className="px-1.5 py-0.5 rounded-full bg-white/20 text-[10px]">{unpushedCount}</span>
-                    )}
-                  </>
+                <Upload size={12} />
+                {pushing ? '...' : 'Push'}
+                {unpushedCount > 0 && (
+                  <span className="px-1 py-px rounded bg-white/20 text-[9px] leading-none">{unpushedCount}</span>
                 )}
               </button>
             )}
           </div>
         )}
 
+        {/* Error panel */}
+        {activeProject && activeProject.status === 'error' && (
+          <div className="px-3 py-3 border-t border space-y-2">
+            <p className="text-[10px] text-red-500 dark:text-red-400 uppercase tracking-wider font-medium">
+              {t('project.error_label', lang)}
+            </p>
+            {activeProject.error && (
+              <p className="text-[11px] text-red-600/80 dark:text-red-300/80 leading-relaxed break-words max-h-20 overflow-y-auto bg-red-500/5 dark:bg-red-500/10 rounded-md px-2 py-1.5">
+                {activeProject.error}
+              </p>
+            )}
+            <button
+              onClick={() => handleRetry(activeProject.id)}
+              disabled={retrying}
+              className="w-full py-1.5 rounded-lg text-[11px] font-medium transition-all duration-150 flex items-center justify-center gap-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white"
+            >
+              <RotateCcw size={12} />
+              {retrying ? t('project.retrying', lang) : t('project.retry', lang)}
+            </button>
+          </div>
+        )}
+
+        {/* Cloning panel */}
+        {activeProject && activeProject.status === 'cloning' && (
+          <div className="px-3 py-3 border-t border">
+            <div className="flex items-center gap-2 text-xs text-amber-500 dark:text-amber-400">
+              <Loader2 size={14} className="animate-spin" />
+              <span>{t('project.status_cloning', lang)}</span>
+            </div>
+          </div>
+        )}
+
         {/* Add button */}
-        <div className="p-3 border-t border-gray-800">
+        <div className="p-2 border-t border">
           <button
             onClick={onAdd}
-            className="w-full py-2 rounded-lg border border-dashed border-gray-600 hover:border-indigo-500 hover:bg-indigo-600/10 text-gray-400 hover:text-indigo-400 text-sm transition-colors"
+            className="w-full py-1.5 rounded-lg text-[11px] font-medium text-txt-secondary hover:text-txt hover:bg-surface-light transition-all duration-150 flex items-center justify-center gap-1.5"
           >
-            + {t('sidebar.add_project', lang)}
+            <Plus size={14} />
+            {t('sidebar.add_project', lang)}
           </button>
         </div>
       </aside>

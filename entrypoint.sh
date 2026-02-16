@@ -9,6 +9,10 @@ echo "Port:    ${WEB_PORT:-8420}"
 git config --global user.name "${GIT_USER_NAME:-Claude Worker}"
 git config --global user.email "${GIT_USER_EMAIL:-claude-worker@dev.local}"
 git config --global init.defaultBranch main
+git config --global http.postBuffer 524288000
+git config --global http.lowSpeedLimit 1000
+git config --global http.lowSpeedTime 60
+git config --global protocol.version 2
 
 # --- Paths ---
 PROJECTS_DIR="/app/data/projects"

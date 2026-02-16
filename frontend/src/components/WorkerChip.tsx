@@ -12,18 +12,18 @@ interface Props {
 }
 
 const statusDot: Record<Worker['status'], string> = {
-  idle: 'bg-green-400',
-  busy: 'bg-blue-400 animate-pulse',
-  stopped: 'bg-gray-400',
-  error: 'bg-red-400',
+  idle: 'bg-emerald-400 glow-green',
+  busy: 'bg-blue-400 glow-blue animate-pulse',
+  stopped: 'bg-zinc-400',
+  error: 'bg-red-400 glow-red',
 }
 
 export default function WorkerChip({ worker, index, selected, lang, onClick, onDoubleClick }: Props) {
   const label = `W${index}`
   const statusText = t(`workers.${worker.status}`, lang)
   const taskTitle = worker.status === 'busy' && worker.current_task_title
-    ? worker.current_task_title.length > 20
-      ? worker.current_task_title.slice(0, 20) + '…'
+    ? worker.current_task_title.length > 18
+      ? worker.current_task_title.slice(0, 18) + '…'
       : worker.current_task_title
     : null
 
@@ -32,19 +32,19 @@ export default function WorkerChip({ worker, index, selected, lang, onClick, onD
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       className={`
-        inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs transition-colors whitespace-nowrap
+        inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] transition-all duration-150 whitespace-nowrap
         ${selected
-          ? 'bg-blue-100 dark:bg-blue-900/40 ring-1 ring-blue-400'
-          : 'hover:bg-gray-200 dark:hover:bg-gray-700'}
+          ? 'bg-accent/10 text-accent ring-1 ring-accent/20'
+          : 'hover:bg-surface-light text-txt-secondary'}
       `}
     >
-      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDot[worker.status]}`} />
-      <span className="font-medium text-gray-700 dark:text-gray-300">{label}</span>
-      <span className="text-gray-500 dark:text-gray-400">
-        {statusText}{taskTitle ? `: "${taskTitle}"` : ''}
-      </span>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDot[worker.status]}`} />
+      <span className="font-medium font-mono">{label}</span>
+      {taskTitle && (
+        <span className="text-txt-muted font-mono truncate max-w-[140px]">{taskTitle}</span>
+      )}
       {worker.tasks_completed > 0 && (
-        <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-[10px] text-gray-500 dark:text-gray-400 leading-none">
+        <span className="ml-0.5 px-1 py-px rounded text-[9px] bg-surface-light text-txt-muted font-mono leading-none">
           {worker.tasks_completed}
         </span>
       )}

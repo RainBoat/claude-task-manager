@@ -233,7 +233,13 @@ claude-parallel-dev/
 - 采用的解决方案
 - 预防措施
 
-后续 Worker 在开始新任务前会读取 `PROGRESS.md`，从历史经验中学习，避免重复犯错。
+同时，系统会将经验同步到 `/app/data/experience/GLOBAL_PROGRESS.md`，用于跨项目复用。
+
+后续 Worker 在开始新任务前会读取：
+- 项目内 `PROGRESS.md`（本项目历史经验）
+- 全局 `GLOBAL_PROGRESS.md`（跨项目相似任务经验，按关键词检索）
+
+从而减少跨项目重复踩坑。
 
 ## 许可证
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -18,6 +19,7 @@ from models import (
 
 PROJECTS_DIR = "/app/data/projects"
 REGISTRY_FILE = "/app/data/projects.json"
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -217,15 +219,16 @@ def get_task(project_id: str, task_id: str) -> Optional[Task]:
 
 
 def recover_stale_tasks() -> int:
-    """Reset tasks stuck in intermediate states back to pending/failed.
+    """Recover tasks/worktrees after an unclean shutdown.
+
     Called on startup to recover from unclean shutdowns.
     - claimed/running/merging/testing → pending (retryable, work not yet committed)
-    - merge_pending → failed (branch will be cleaned up, committed work is lost)"""
+    - merge_pending is preserved for manual merge (branch is kept)
+    """
     retryable_statuses = {
         TaskStatus.CLAIMED, TaskStatus.RUNNING,
         TaskStatus.MERGING, TaskStatus.TESTING,
     }
-    lost_statuses = {TaskStatus.MERGE_PENDING}
     lock = FileLock(REGISTRY_LOCK, timeout=10)
     with lock:
         registry = _read_registry()
@@ -234,6 +237,7 @@ def recover_stale_tasks() -> int:
     for project in registry.projects:
         tasks_file, lock_file = _get_paths(project.id)
         plock = FileLock(lock_file, timeout=5)
+        preserved_branches: set[str] = set()
         try:
             with plock:
                 queue = _read_queue(tasks_file)
@@ -245,12 +249,13 @@ def recover_stale_tasks() -> int:
                         task.error = None
                         changed = True
                         recovered += 1
-                    elif task.status in lost_statuses:
-                        task.status = TaskStatus.FAILED
-                        task.worker_id = None
-                        task.error = "Branch lost after container restart — please retry"
-                        changed = True
-                        recovered += 1
+                    elif task.status == TaskStatus.MERGE_PENDING:
+                        # Keep manual-merge tasks and their branches intact.
+                        if task.worker_id is not None:
+                            task.worker_id = None
+                            changed = True
+                        if task.branch:
+                            preserved_branches.add(task.branch)
                 if changed:
                     _write_queue(tasks_file, queue)
         except Exception:
@@ -281,14 +286,14 @@ def recover_stale_tasks() -> int:
                 cwd=repo_dir, capture_output=True, timeout=30,
             )
 
-            # 3. Delete all claude/* branches (they are ephemeral)
+            # 3. Delete stale claude/* branches, but keep manual-merge branches.
             result = subprocess.run(
                 ["git", "branch", "--list", "claude/*"],
                 cwd=repo_dir, capture_output=True, text=True, timeout=30,
             )
             for line in result.stdout.splitlines():
                 branch = line.strip().lstrip("* ")
-                if branch:
+                if branch and branch not in preserved_branches:
                     subprocess.run(
                         ["git", "branch", "-D", branch],
                         cwd=repo_dir, capture_output=True, timeout=30,

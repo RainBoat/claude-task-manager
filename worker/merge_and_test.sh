@@ -13,6 +13,18 @@ TASK_ID="${TASK_ID:-unknown}"
 
 MAX_RETRIES=3
 RETRY=0
+LAST_ERROR=""
+
+set_error() {
+    LAST_ERROR="$1"
+    echo "[${WORKER_ID}] ERROR: ${LAST_ERROR}"
+    echo "MERGE_TEST_ERROR: ${LAST_ERROR}"
+}
+
+flatten_lines() {
+    # Collapse multiline command output into a single line for task error fields.
+    echo "$1" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g' | sed 's/^ //; s/ $//'
+}
 
 while [ $RETRY -lt $MAX_RETRIES ]; do
     RETRY=$((RETRY + 1))
@@ -32,7 +44,7 @@ while [ $RETRY -lt $MAX_RETRIES ]; do
     fi
 
     # Attempt rebase
-    if [ -z "$REBASE_TARGET" ] || git -C "$WORKTREE_DIR" rebase "$REBASE_TARGET" 2>/dev/null; then
+    if [ -z "$REBASE_TARGET" ] || git -C "$WORKTREE_DIR" rebase "$REBASE_TARGET"; then
         echo "[${WORKER_ID}] Rebase successful"
     else
         echo "[${WORKER_ID}] Rebase conflict detected, attempting resolution..."
@@ -42,6 +54,7 @@ while [ $RETRY -lt $MAX_RETRIES ]; do
 
         if [ -z "$CONFLICTS" ]; then
             # No conflicts but rebase failed — abort and retry
+            set_error "rebase failed without conflict files (target: ${REBASE_TARGET})"
             git -C "$WORKTREE_DIR" rebase --abort 2>/dev/null
             echo "[${WORKER_ID}] Rebase failed without conflicts, retrying..."
             sleep 5
@@ -71,6 +84,8 @@ Do NOT commit — just resolve and stage."
         # Check if conflicts are resolved
         REMAINING=$(git -C "$WORKTREE_DIR" diff --name-only --diff-filter=U 2>/dev/null)
         if [ -n "$REMAINING" ]; then
+            REMAINING_FILES=$(echo "$REMAINING" | tr '\n' ',' | sed 's/,$//')
+            set_error "rebase conflicts unresolved: ${REMAINING_FILES}"
             echo "[${WORKER_ID}] Conflicts still unresolved, aborting rebase"
             git -C "$WORKTREE_DIR" rebase --abort 2>/dev/null
             sleep 5
@@ -78,11 +93,15 @@ Do NOT commit — just resolve and stage."
         fi
 
         # Continue rebase
-        git -C "$WORKTREE_DIR" rebase --continue --no-edit 2>/dev/null || {
+        CONTINUE_OUTPUT=$(git -C "$WORKTREE_DIR" rebase --continue 2>&1)
+        CONTINUE_EXIT=$?
+        if [ $CONTINUE_EXIT -ne 0 ]; then
+            set_error "rebase --continue failed: $(flatten_lines "$CONTINUE_OUTPUT")"
+            echo "$CONTINUE_OUTPUT"
             git -C "$WORKTREE_DIR" rebase --abort 2>/dev/null
             sleep 5
             continue
-        }
+        fi
     fi
 
     # --- Run tests (if test script exists) ---
@@ -93,17 +112,23 @@ Do NOT commit — just resolve and stage."
         if [ -n "$HAS_TEST" ] && [ "$HAS_TEST" != "echo \"Error: no test specified\" && exit 1" ]; then
             echo "[${WORKER_ID}] Running npm test..."
             cd "$WORKTREE_DIR"
-            npm install --silent 2>/dev/null
-            npm test 2>/dev/null
+            npm install --silent
+            npm test
             TEST_EXIT=$?
             cd /app
+            if [ $TEST_EXIT -ne 0 ]; then
+                set_error "npm test failed (exit ${TEST_EXIT})"
+            fi
         fi
     elif [ -f "${WORKTREE_DIR}/pytest.ini" ] || [ -f "${WORKTREE_DIR}/setup.py" ] || [ -f "${WORKTREE_DIR}/pyproject.toml" ]; then
         echo "[${WORKER_ID}] Running pytest..."
         cd "$WORKTREE_DIR"
-        python3 -m pytest --tb=short 2>/dev/null
+        python3 -m pytest --tb=short
         TEST_EXIT=$?
         cd /app
+        if [ $TEST_EXIT -ne 0 ]; then
+            set_error "pytest failed (exit ${TEST_EXIT})"
+        fi
     fi
 
     if [ $TEST_EXIT -eq 0 ]; then
@@ -129,5 +154,10 @@ Do NOT commit — just resolve and stage."
     fi
 done
 
+if [ -z "$LAST_ERROR" ]; then
+    LAST_ERROR="merge/test failed after ${MAX_RETRIES} retries"
+fi
+
 echo "[${WORKER_ID}] Merge/test failed after ${MAX_RETRIES} retries"
+echo "MERGE_TEST_ERROR: ${LAST_ERROR}"
 exit 1

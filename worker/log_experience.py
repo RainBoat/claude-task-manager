@@ -11,6 +11,8 @@ import os
 import subprocess
 from datetime import datetime
 
+from global_experience import append_global_entry
+
 
 def extract_summary_from_log(log_file: str) -> str:
     """Extract assistant messages from the Claude Code stream-json log."""
@@ -129,6 +131,8 @@ Respond with ONLY a markdown block in this exact format (no extra text):
 def main():
     parser = argparse.ArgumentParser(description="Log experience to PROGRESS.md")
     parser.add_argument("--repo-dir", required=True)
+    parser.add_argument("--project-id", default="")
+    parser.add_argument("--project-name", default="")
     parser.add_argument("--task-id", required=True)
     parser.add_argument("--task-title", required=True)
     parser.add_argument("--worker-id", required=True)
@@ -153,9 +157,21 @@ def main():
         repo_dir=args.repo_dir,
     )
 
-    # Append to PROGRESS.md
+    # Append to project-local PROGRESS.md
     with open(progress_file, "a") as f:
         f.write(entry)
+
+    # Append to global cross-project experience store (non-fatal)
+    try:
+        append_global_entry(
+            project_id=args.project_id,
+            project_name=args.project_name,
+            task_id=args.task_id,
+            task_title=args.task_title,
+            local_entry=entry,
+        )
+    except Exception:
+        pass
 
     # Commit PROGRESS.md to main repo
     try:

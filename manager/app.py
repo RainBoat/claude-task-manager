@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import subprocess
 from contextlib import asynccontextmanager
@@ -20,6 +21,8 @@ import event_log
 from models import TaskCreate, TaskStatus, PlanRequest, PlanApproval, PlanChatRequest, ProjectCreate, ProjectStatus
 from stream_parser import tail_log, parse_log_file
 
+logger = logging.getLogger(__name__)
+
 # --- Worker mode selection ---
 WORKER_MODE = os.environ.get("WORKER_MODE", "container")
 
@@ -31,11 +34,32 @@ if WORKER_MODE == "container":
 else:
     from worker_pool import pool
 
+_project_git_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_project_git_lock(project_id: str) -> asyncio.Lock:
+    """Get the per-project git operation lock shared with task scheduler when possible."""
+    if WORKER_MODE == "container":
+        try:
+            return task_scheduler._get_project_lock(project_id)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+    if project_id not in _project_git_locks:
+        _project_git_locks[project_id] = asyncio.Lock()
+    return _project_git_locks[project_id]
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: initialize worker pool and optionally start dispatcher loop."""
     global pool, _container_pool
+
+    recovered = dispatcher.recover_stale_tasks()
+    if recovered:
+        msg = f"Recovered {recovered} stale tasks on startup"
+        logger.info(msg)
+        event_log.emit("system", msg)
 
     if WORKER_MODE == "container":
         worker_count = int(os.environ.get("WORKER_COUNT", "3"))
@@ -431,74 +455,93 @@ class MergeRequest(_PydanticBase):
 
 @app.post("/api/projects/{project_id}/tasks/{task_id}/merge")
 async def merge_task(project_id: str, task_id: str, body: MergeRequest):
-    task = dispatcher.get_task(project_id, task_id)
-    if not task:
-        return JSONResponse(status_code=404, content={"error": "task not found"})
-    if task.status != TaskStatus.MERGE_PENDING:
-        return JSONResponse(status_code=400, content={
-            "error": f"Cannot merge task in '{task.status}' state"
-        })
-    if not task.branch:
-        return JSONResponse(status_code=400, content={"error": "task has no branch"})
-
     repo_dir = f"/app/data/projects/{project_id}/repo"
     project = dispatcher.get_project(project_id)
-    branch_base = project.branch if project else "main"
+    branch_base = project.branch if project and project.branch else "main"
 
     try:
         loop = asyncio.get_event_loop()
+        async with _get_project_git_lock(project_id):
+            task = dispatcher.get_task(project_id, task_id)
+            if not task:
+                return JSONResponse(status_code=404, content={"error": "task not found"})
+            if task.status != TaskStatus.MERGE_PENDING:
+                return JSONResponse(status_code=400, content={
+                    "error": f"Cannot merge task in '{task.status}' state"
+                })
+            if not task.branch:
+                return JSONResponse(status_code=400, content={"error": "task has no branch"})
 
-        # Remove untracked CLAUDE.md to prevent merge conflicts
-        claude_md = os.path.join(repo_dir, "CLAUDE.md")
-        if os.path.exists(claude_md) and not _is_tracked(repo_dir, "CLAUDE.md"):
-            os.remove(claude_md)
-
-        if body.squash:
-            result = await loop.run_in_executor(None, lambda: subprocess.run(
-                ["git", "merge", "--squash", task.branch],
+            # Best-effort fetch to improve checkout fallback for origin/<base>.
+            await loop.run_in_executor(None, lambda: subprocess.run(
+                ["git", "fetch", "origin"],
                 capture_output=True, text=True, timeout=60, cwd=repo_dir,
             ))
-            if result.returncode != 0:
-                return JSONResponse(status_code=500, content={"error": f"Squash merge failed: {result.stderr[:300]}"})
-            # Commit the squashed changes
-            commit_msg = f"feat: {task.title} (task {task_id})"
-            result2 = await loop.run_in_executor(None, lambda: subprocess.run(
-                ["git", "commit", "-m", commit_msg],
+
+            checkout = await loop.run_in_executor(None, lambda: subprocess.run(
+                ["git", "checkout", branch_base],
                 capture_output=True, text=True, timeout=30, cwd=repo_dir,
             ))
-            if result2.returncode != 0:
-                return JSONResponse(status_code=500, content={"error": f"Commit failed: {result2.stderr[:300]}"})
-        else:
-            result = await loop.run_in_executor(None, lambda: subprocess.run(
-                ["git", "merge", task.branch, "--no-edit"],
-                capture_output=True, text=True, timeout=60, cwd=repo_dir,
-            ))
-            if result.returncode != 0:
-                # Abort failed merge
-                await loop.run_in_executor(None, lambda: subprocess.run(
-                    ["git", "merge", "--abort"], capture_output=True, text=True, cwd=repo_dir,
+            if checkout.returncode != 0:
+                checkout = await loop.run_in_executor(None, lambda: subprocess.run(
+                    ["git", "checkout", "-B", branch_base, f"origin/{branch_base}"],
+                    capture_output=True, text=True, timeout=30, cwd=repo_dir,
                 ))
-                return JSONResponse(status_code=500, content={"error": f"Merge failed: {result.stderr[:300]}"})
+            if checkout.returncode != 0:
+                err = checkout.stderr[:300] if checkout.stderr else checkout.stdout[:300]
+                return JSONResponse(status_code=500, content={"error": f"Checkout {branch_base} failed: {err}"})
 
-        # Get final commit
-        commit_result = await loop.run_in_executor(None, lambda: subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=10, cwd=repo_dir,
-        ))
-        final_commit = commit_result.stdout.strip() if commit_result.returncode == 0 else "unknown"
+            # Remove untracked CLAUDE.md to prevent merge conflicts
+            claude_md = os.path.join(repo_dir, "CLAUDE.md")
+            if os.path.exists(claude_md) and not _is_tracked(repo_dir, "CLAUDE.md"):
+                os.remove(claude_md)
 
-        # Delete the branch
-        await loop.run_in_executor(None, lambda: subprocess.run(
-            ["git", "branch", "-D", task.branch],
-            capture_output=True, text=True, timeout=10, cwd=repo_dir,
-        ))
+            if body.squash:
+                result = await loop.run_in_executor(None, lambda: subprocess.run(
+                    ["git", "merge", "--squash", task.branch],
+                    capture_output=True, text=True, timeout=60, cwd=repo_dir,
+                ))
+                if result.returncode != 0:
+                    return JSONResponse(status_code=500, content={"error": f"Squash merge failed: {result.stderr[:300]}"})
+                # Commit the squashed changes
+                commit_msg = f"feat: {task.title} (task {task_id})"
+                result2 = await loop.run_in_executor(None, lambda: subprocess.run(
+                    ["git", "commit", "-m", commit_msg],
+                    capture_output=True, text=True, timeout=30, cwd=repo_dir,
+                ))
+                if result2.returncode != 0:
+                    return JSONResponse(status_code=500, content={"error": f"Commit failed: {result2.stderr[:300]}"})
+            else:
+                result = await loop.run_in_executor(None, lambda: subprocess.run(
+                    ["git", "merge", task.branch, "--no-edit"],
+                    capture_output=True, text=True, timeout=60, cwd=repo_dir,
+                ))
+                if result.returncode != 0:
+                    # Abort failed merge
+                    await loop.run_in_executor(None, lambda: subprocess.run(
+                        ["git", "merge", "--abort"], capture_output=True, text=True, cwd=repo_dir,
+                    ))
+                    return JSONResponse(status_code=500, content={"error": f"Merge failed: {result.stderr[:300]}"})
 
-        # Update task status
-        dispatcher.update_task_status(
-            project_id=project_id, task_id=task_id,
-            status=TaskStatus.COMPLETED, commit_id=final_commit,
-        )
-        return {"status": "merged", "commit": final_commit}
+            # Get final commit
+            commit_result = await loop.run_in_executor(None, lambda: subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=10, cwd=repo_dir,
+            ))
+            final_commit = commit_result.stdout.strip() if commit_result.returncode == 0 else "unknown"
+
+            # Delete the branch
+            await loop.run_in_executor(None, lambda: subprocess.run(
+                ["git", "branch", "-D", task.branch],
+                capture_output=True, text=True, timeout=10, cwd=repo_dir,
+            ))
+
+            # Update task status
+            dispatcher.update_task_status(
+                project_id=project_id, task_id=task_id,
+                status=TaskStatus.COMPLETED, commit_id=final_commit,
+            )
+            return {"status": "merged", "commit": final_commit}
 
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)[:300]})

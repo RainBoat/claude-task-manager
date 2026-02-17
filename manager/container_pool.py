@@ -60,6 +60,7 @@ class ContainerPool:
         repo_path: str,
         log_dir: str,
         branch_name: str,
+        cross_project_experience: str = "",
     ) -> bool:
         """Start a worker container to execute a single task.
 
@@ -94,6 +95,7 @@ class ContainerPool:
             "TASK_TITLE": task.title,
             "TASK_DESC": task.description,
             "TASK_PLAN": task.plan or "",
+            "CROSS_PROJECT_EXPERIENCE": (cross_project_experience or "")[:8000],
             "PROJECT_ID": project_id,
             "PROJECT_NAME": project_name,
             "WORKER_ID": worker_id,
@@ -165,8 +167,9 @@ class ContainerPool:
             result = container.wait(timeout=1800)  # 30 min max
             return result
         except NotFound:
-            # Container already removed (auto_remove=True after exit)
-            return {"StatusCode": 0}
+            # Container missing before wait could resolve a status.
+            # Caller must decide success/failure based on task state callbacks.
+            return {"StatusCode": -1, "Error": "container not found during wait"}
         except Exception as e:
             return {"StatusCode": -1, "Error": str(e)}
 

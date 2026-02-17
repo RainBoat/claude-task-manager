@@ -8,10 +8,33 @@ set -uo pipefail
 
 WORKER_ID="${WORKER_ID:?WORKER_ID required}"
 BRANCH_BASE="${REPO_BRANCH:-main}"
+MAX_PROGRESS_READ_CHARS="${MAX_PROGRESS_READ_CHARS:-12000}"
+MAX_PROGRESS_PROMPT_CHARS="${MAX_PROGRESS_PROMPT_CHARS:-3000}"
 
 CLAIM_SCRIPT="/app/worker/claim_task.py"
 MERGE_SCRIPT="/app/worker/merge_and_test.sh"
 LOG_SCRIPT="/app/worker/log_experience.py"
+GLOBAL_QUERY_SCRIPT="/app/worker/query_global_experience.py"
+
+truncate_for_prompt() {
+    local text="$1"
+    local max_chars="$2"
+    local length="${#text}"
+
+    if [ "$length" -le "$max_chars" ]; then
+        printf "%s" "$text"
+        return
+    fi
+
+    local keep_chars=$((max_chars - 80))
+    if [ "$keep_chars" -le 0 ]; then
+        printf "[TRUNCATED %d chars]\n" "$((length - max_chars))"
+        return
+    fi
+
+    printf "[TRUNCATED %d chars, showing latest %d chars]\n%s" \
+        "$((length - max_chars))" "$keep_chars" "${text: -$keep_chars}"
+}
 
 echo "[${WORKER_ID}] Worker started. Polling for tasks (multi-project)..."
 
@@ -97,12 +120,31 @@ while true; do
     EXPERIENCE=""
     PROGRESS_FILE="${REPO_DIR}/PROGRESS.md"
     if [ -f "$PROGRESS_FILE" ]; then
-        # Extract last 5 structured experience entries (each starts with "## [")
-        EXPERIENCE=$(awk '/^## \[/{count++; if(count>n) exit} count>0' n=5 RS='(^|\n)(?=## \\[)' "$PROGRESS_FILE" 2>/dev/null | tail -c 3000)
+        # Bound read size first so a very large PROGRESS.md cannot expand prompt unexpectedly.
+        PROGRESS_TAIL=$(tail -c "$MAX_PROGRESS_READ_CHARS" "$PROGRESS_FILE" 2>/dev/null || true)
+        # Extract last 5 structured entries (each starts with "## [") from bounded tail.
+        EXPERIENCE=$(printf "%s\n" "$PROGRESS_TAIL" | awk -v n=5 '
+            /^## \[/ {idx++; sections[idx]=$0 ORS; next}
+            {if (idx>0) sections[idx]=sections[idx] $0 ORS}
+            END {
+                start = idx - n + 1
+                if (start < 1) start = 1
+                for (i=start; i<=idx; i++) printf "%s", sections[i]
+            }')
         if [ -z "$EXPERIENCE" ]; then
-            # Fallback: grab last 2000 chars
-            EXPERIENCE=$(tail -c 2000 "$PROGRESS_FILE" 2>/dev/null)
+            EXPERIENCE="$PROGRESS_TAIL"
         fi
+        EXPERIENCE=$(truncate_for_prompt "$EXPERIENCE" "$MAX_PROGRESS_PROMPT_CHARS")
+    fi
+
+    CROSS_EXPERIENCE=""
+    if [ -f "$GLOBAL_QUERY_SCRIPT" ]; then
+        CROSS_EXPERIENCE=$(python3 "$GLOBAL_QUERY_SCRIPT" \
+            --project-id "$PROJECT_ID" \
+            --task-title "$TASK_TITLE" \
+            --task-desc "$TASK_DESC" \
+            --max-entries 3 \
+            --max-chars 2500 2>/dev/null || true)
     fi
 
     # --- 5. Build prompt ---
@@ -132,10 +174,17 @@ ${TASK_PLAN}"
 ${EXPERIENCE}"
     fi
 
+    if [ -n "$CROSS_EXPERIENCE" ]; then
+        PROMPT="${PROMPT}
+
+## Cross-Project Experience (apply only if analogous to this task):
+${CROSS_EXPERIENCE}"
+    fi
+
     PROMPT="${PROMPT}
 
 ## Instructions
-1. Review the historical experience above (if any) for relevant lessons before starting.
+1. Review the historical experience above (project + cross-project) for relevant lessons before starting.
 2. First explore the project structure to understand the codebase before making changes.
 3. Implement the changes described above — all new files and modifications must be within your working directory (${WORKTREE_DIR}).
 4. Make sure all changes are correct and complete.
@@ -258,6 +307,8 @@ ${EXPERIENCE}"
         # --- 9. Log experience ---
         python3 "$LOG_SCRIPT" \
             --repo-dir "$REPO_DIR" \
+            --project-id "$PROJECT_ID" \
+            --project-name "$PROJECT_NAME" \
             --task-id "$TASK_ID" \
             --task-title "$TASK_TITLE" \
             --worker-id "$WORKER_ID" \
@@ -278,6 +329,8 @@ ${EXPERIENCE}"
         # --- 9. Log experience ---
         python3 "$LOG_SCRIPT" \
             --repo-dir "$REPO_DIR" \
+            --project-id "$PROJECT_ID" \
+            --project-name "$PROJECT_NAME" \
             --task-id "$TASK_ID" \
             --task-title "$TASK_TITLE" \
             --worker-id "$WORKER_ID" \

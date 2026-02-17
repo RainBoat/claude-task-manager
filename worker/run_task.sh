@@ -6,6 +6,7 @@ set -uo pipefail
 #
 # Environment variables (set by manager):
 #   TASK_ID, TASK_TITLE, TASK_DESC, TASK_PLAN (optional)
+#   CROSS_PROJECT_EXPERIENCE (optional)
 #   PROJECT_ID, PROJECT_NAME, WORKER_ID
 #   MANAGER_URL (e.g. http://host.docker.internal:8420)
 #   BRANCH_NAME, BASE_REF
@@ -15,29 +16,63 @@ TASK_ID="${TASK_ID:?TASK_ID required}"
 TASK_TITLE="${TASK_TITLE:?TASK_TITLE required}"
 TASK_DESC="${TASK_DESC:?TASK_DESC required}"
 TASK_PLAN="${TASK_PLAN:-}"
+CROSS_PROJECT_EXPERIENCE="${CROSS_PROJECT_EXPERIENCE:-}"
 PROJECT_ID="${PROJECT_ID:?PROJECT_ID required}"
 PROJECT_NAME="${PROJECT_NAME:-$PROJECT_ID}"
 WORKER_ID="${WORKER_ID:?WORKER_ID required}"
 MANAGER_URL="${MANAGER_URL:?MANAGER_URL required}"
 BRANCH_NAME="${BRANCH_NAME:-claude/$TASK_ID}"
 LOG_FILE="/logs/${WORKER_ID}.jsonl"
+MAX_PROGRESS_READ_CHARS="${MAX_PROGRESS_READ_CHARS:-12000}"
+MAX_PROGRESS_PROMPT_CHARS="${MAX_PROGRESS_PROMPT_CHARS:-3000}"
 
 echo "[${WORKER_ID}] Container started for task ${TASK_ID}: ${TASK_TITLE}"
+
+truncate_for_prompt() {
+    local text="$1"
+    local max_chars="$2"
+    local length="${#text}"
+
+    if [ "$length" -le "$max_chars" ]; then
+        printf "%s" "$text"
+        return
+    fi
+
+    local keep_chars=$((max_chars - 80))
+    if [ "$keep_chars" -le 0 ]; then
+        printf "[TRUNCATED %d chars]\n" "$((length - max_chars))"
+        return
+    fi
+
+    printf "[TRUNCATED %d chars, showing latest %d chars]\n%s" \
+        "$((length - max_chars))" "$keep_chars" "${text: -$keep_chars}"
+}
 
 # --- Helper: notify manager of status change ---
 notify_status() {
     local status="$1"
     shift
-    local body="{\"status\":\"${status}\""
+    local branch=""
+    local commit=""
+    local error=""
     while [ $# -gt 0 ]; do
         case "$1" in
-            --branch) body="${body},\"branch\":\"$2\""; shift 2 ;;
-            --commit) body="${body},\"commit\":\"$2\""; shift 2 ;;
-            --error)  body="${body},\"error\":\"$2\"";  shift 2 ;;
+            --branch) branch="$2"; shift 2 ;;
+            --commit) commit="$2"; shift 2 ;;
+            --error)  error="$2"; shift 2 ;;
             *) shift ;;
         esac
     done
-    body="${body}}"
+    local body
+    body=$(jq -n \
+        --arg status "$status" \
+        --arg branch "$branch" \
+        --arg commit "$commit" \
+        --arg error "$error" \
+        '({status: $status}
+          + (if $branch != "" then {branch: $branch} else {} end)
+          + (if $commit != "" then {commit: $commit} else {} end)
+          + (if $error != "" then {error: $error} else {} end))')
     curl -sf -X POST "${MANAGER_URL}/api/internal/tasks/${PROJECT_ID}/${TASK_ID}/status" \
         -H "Content-Type: application/json" \
         -d "$body" >/dev/null 2>&1 || true
@@ -70,10 +105,20 @@ fi
 EXPERIENCE=""
 PROGRESS_FILE="/workspace/PROGRESS.md"
 if [ -f "$PROGRESS_FILE" ]; then
-    EXPERIENCE=$(awk '/^## \[/{count++; if(count>n) exit} count>0' n=5 RS='(^|\n)(?=## \\[)' "$PROGRESS_FILE" 2>/dev/null | tail -c 3000)
+    # Bound read size first so a very large PROGRESS.md cannot expand prompt unexpectedly.
+    PROGRESS_TAIL=$(tail -c "$MAX_PROGRESS_READ_CHARS" "$PROGRESS_FILE" 2>/dev/null || true)
+    EXPERIENCE=$(printf "%s\n" "$PROGRESS_TAIL" | awk -v n=5 '
+        /^## \[/ {idx++; sections[idx]=$0 ORS; next}
+        {if (idx>0) sections[idx]=sections[idx] $0 ORS}
+        END {
+            start = idx - n + 1
+            if (start < 1) start = 1
+            for (i=start; i<=idx; i++) printf "%s", sections[i]
+        }')
     if [ -z "$EXPERIENCE" ]; then
-        EXPERIENCE=$(tail -c 2000 "$PROGRESS_FILE" 2>/dev/null)
+        EXPERIENCE="$PROGRESS_TAIL"
     fi
+    EXPERIENCE=$(truncate_for_prompt "$EXPERIENCE" "$MAX_PROGRESS_PROMPT_CHARS")
 fi
 
 # --- 4. Build prompt ---
@@ -100,10 +145,17 @@ if [ -n "$EXPERIENCE" ]; then
 ${EXPERIENCE}"
 fi
 
+if [ -n "$CROSS_PROJECT_EXPERIENCE" ]; then
+    PROMPT="${PROMPT}
+
+## Cross-Project Experience (apply only if analogous to this task):
+${CROSS_PROJECT_EXPERIENCE}"
+fi
+
 PROMPT="${PROMPT}
 
 ## Instructions
-1. Review the historical experience above (if any) for relevant lessons before starting.
+1. Review the historical experience above (project + cross-project) for relevant lessons before starting.
 2. First explore the project structure to understand the codebase before making changes.
 3. Implement the changes described above — all new files and modifications must be within /workspace.
 4. Make sure all changes are correct and complete.

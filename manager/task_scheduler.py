@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 # Will be set by app.py at startup
 container_pool = None  # type: ignore
+_QUERY_GLOBAL_EXPERIENCE_SCRIPT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "worker", "query_global_experience.py")
+)
 
 # Per-project git locks to serialize merge operations
 _project_git_locks: dict[str, asyncio.Lock] = {}
@@ -35,6 +38,34 @@ def _get_project_lock(project_id: str) -> asyncio.Lock:
 def _run_git(args: list[str], cwd: str, timeout: int = 60) -> subprocess.CompletedProcess:
     """Run a git command synchronously (call from executor)."""
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout, cwd=cwd)
+
+
+def _load_cross_project_experience(project_id: str, task_title: str, task_desc: str) -> str:
+    """Load relevant experience snippets from other projects."""
+    if not os.path.isfile(_QUERY_GLOBAL_EXPERIENCE_SCRIPT):
+        return ""
+
+    try:
+        result = subprocess.run(
+            [
+                "python3",
+                _QUERY_GLOBAL_EXPERIENCE_SCRIPT,
+                "--project-id", project_id,
+                "--task-title", task_title or "",
+                "--task-desc", task_desc or "",
+                "--max-entries", "3",
+                "--max-chars", "2500",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        return ""
+
+    return ""
 
 
 def _create_worktree(repo_dir: str, worktree_dir: str, branch_name: str, branch_base: str) -> bool:
@@ -106,8 +137,12 @@ def _create_worktree(repo_dir: str, worktree_dir: str, branch_name: str, branch_
 def _do_merge_and_test(
     repo_dir: str, worktree_dir: str, branch_name: str, branch_base: str,
     worker_id: str, task_id: str,
-) -> bool:
-    """Run merge_and_test.sh synchronously. Returns True on success."""
+) -> tuple[bool, str, str]:
+    """Run merge_and_test.sh synchronously.
+
+    Returns:
+        (success, failure_reason, combined_output)
+    """
     env = os.environ.copy()
     env.update({
         "WORKTREE_DIR": worktree_dir,
@@ -121,10 +156,33 @@ def _do_merge_and_test(
             ["/app/worker/merge_and_test.sh"],
             env=env, capture_output=True, text=True, timeout=600,
         )
-        return r.returncode == 0
-    except (subprocess.TimeoutExpired, Exception) as e:
+        output = "\n".join(part for part in (r.stdout, r.stderr) if part).strip()
+
+        reason = ""
+        if output:
+            for line in reversed(output.splitlines()):
+                if "MERGE_TEST_ERROR:" in line:
+                    reason = line.split("MERGE_TEST_ERROR:", 1)[1].strip()
+                    break
+
+        if not reason and r.returncode != 0:
+            if output:
+                reason = output.splitlines()[-1].strip()
+            else:
+                reason = f"merge_and_test exit code {r.returncode}"
+
+        return r.returncode == 0, reason, output
+    except subprocess.TimeoutExpired as e:
+        stdout = e.stdout or ""
+        stderr = e.stderr or ""
+        output = "\n".join(part for part in (stdout, stderr) if part).strip()
+        reason = "merge_and_test timeout after 600s"
+        logger.error(f"merge_and_test failed: {reason}")
+        return False, reason, output
+    except Exception as e:
+        reason = f"merge_and_test execution error: {e}"
         logger.error(f"merge_and_test failed: {e}")
-        return False
+        return False, reason, ""
 
 
 def _do_auto_merge(
@@ -177,12 +235,15 @@ def _do_auto_merge(
 def _log_experience(
     repo_dir: str, task_id: str, task_title: str,
     worker_id: str, commit_id: str, log_file: str,
+    project_id: str, project_name: str,
 ) -> None:
     """Run log_experience.py to record task outcome."""
     try:
         subprocess.run(
             ["python3", "/app/worker/log_experience.py",
              "--repo-dir", repo_dir,
+             "--project-id", project_id,
+             "--project-name", project_name,
              "--task-id", task_id,
              "--task-title", task_title,
              "--worker-id", worker_id,
@@ -238,6 +299,12 @@ async def _handle_task(worker_id: str, project_id: str, task) -> None:
         pool.mark_idle(worker_id)
         return
 
+    cross_project_experience = await loop.run_in_executor(
+        None, _load_cross_project_experience, project_id, task.title, task.description
+    )
+    if cross_project_experience:
+        event_log.emit(worker_id, "Loaded cross-project experience context")
+
     # 2. Start worker container
     event_log.emit(worker_id, f"Starting container...")
     started = pool.run_task(
@@ -249,6 +316,7 @@ async def _handle_task(worker_id: str, project_id: str, task) -> None:
         repo_path=repo_dir,
         log_dir=log_dir,
         branch_name=branch_name,
+        cross_project_experience=cross_project_experience,
     )
     if not started:
         event_log.emit(worker_id, f"Container start failed for task {task.id}")
@@ -262,6 +330,10 @@ async def _handle_task(worker_id: str, project_id: str, task) -> None:
     # 3. Wait for container to finish
     result = await loop.run_in_executor(None, pool.wait_container, worker_id)
     exit_code = result.get("StatusCode", -1)
+    wait_error = result.get("Error")
+    if wait_error:
+        logger.warning(f"[{worker_id}] Container wait returned error for task {task.id}: {wait_error}")
+        event_log.emit(worker_id, f"Container wait warning: {wait_error}")
     event_log.emit(worker_id, f"Container exited (code {exit_code})")
     logger.info(f"[{worker_id}] Container exited with code {exit_code} for task {task.id}")
 
@@ -318,13 +390,28 @@ async def _handle_task(worker_id: str, project_id: str, task) -> None:
     # 6. Merge and test + auto-merge (serialized per-project to avoid race conditions)
     async with _get_project_lock(project_id):
         event_log.emit(worker_id, f"Running merge & test...")
-        merge_ok = await loop.run_in_executor(
+        merge_ok, merge_reason, merge_output = await loop.run_in_executor(
             None, _do_merge_and_test, repo_dir, worktree_dir, branch_name, branch_base, worker_id, task.id
         )
 
         if not merge_ok:
-            event_log.emit(worker_id, f"Task failed: merge or test failed")
-            dispatcher.update_task_status(project_id, task.id, TaskStatus.FAILED, error="merge or test failed after retries")
+            failure_reason = merge_reason or "merge or test failed"
+            event_log.emit(worker_id, f"Task failed: {failure_reason}")
+
+            if merge_output:
+                tail_lines = merge_output.splitlines()[-50:]
+                tail_text = "\n".join(tail_lines)
+                # Keep event payload bounded so recent events remain readable.
+                if len(tail_text) > 6000:
+                    tail_text = tail_text[-6000:]
+                event_log.emit(worker_id, f"merge/test log tail:\n{tail_text}")
+
+            dispatcher.update_task_status(
+                project_id,
+                task.id,
+                TaskStatus.FAILED,
+                error=f"merge or test failed: {failure_reason}",
+            )
             await loop.run_in_executor(None, _cleanup_worktree, repo_dir, worktree_dir, branch_name, True)
             pool.mark_idle(worker_id)
             return
@@ -342,7 +429,8 @@ async def _handle_task(worker_id: str, project_id: str, task) -> None:
                 )
                 event_log.emit(worker_id, f"Task completed: {task.title}")
                 await loop.run_in_executor(
-                    None, _log_experience, repo_dir, task.id, task.title, worker_id, final_commit, log_file
+                    None, _log_experience, repo_dir, task.id, task.title, worker_id, final_commit, log_file,
+                    project_id, project.name
                 )
                 event_log.emit(worker_id, f"Cleaning up worktree")
                 await loop.run_in_executor(None, _cleanup_worktree, repo_dir, worktree_dir, branch_name, True)
@@ -363,7 +451,8 @@ async def _handle_task(worker_id: str, project_id: str, task) -> None:
                 )
                 event_log.emit(worker_id, f"Auto-merge failed, kept branch {branch_name} for manual merge")
                 await loop.run_in_executor(
-                    None, _log_experience, repo_dir, task.id, task.title, worker_id, final_commit, log_file
+                    None, _log_experience, repo_dir, task.id, task.title, worker_id, final_commit, log_file,
+                    project_id, project.name
                 )
                 # Cleanup worktree but keep branch so commits are not lost
                 await loop.run_in_executor(None, _cleanup_worktree, repo_dir, worktree_dir, branch_name, False)
@@ -379,7 +468,8 @@ async def _handle_task(worker_id: str, project_id: str, task) -> None:
             )
             event_log.emit(worker_id, f"Task ready for merge: {task.title}")
             await loop.run_in_executor(
-                None, _log_experience, repo_dir, task.id, task.title, worker_id, final_commit, log_file
+                None, _log_experience, repo_dir, task.id, task.title, worker_id, final_commit, log_file,
+                project_id, project.name
             )
 
             # Cleanup worktree only (keep branch for manual merge)

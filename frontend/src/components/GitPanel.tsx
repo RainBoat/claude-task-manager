@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useLayoutEffect } from 'react'
 import { X, ChevronRight, Loader2 } from 'lucide-react'
 import type { GitCommit, GitFileChange } from '../types'
 import type { Lang } from '../i18n'
@@ -16,66 +16,71 @@ interface Props {
 
 const ROW_H = 36
 const LANE_W = 16
-const NODE_R = 4
+const NODE_R = 4.5
 const LINE_W = 2
 const BRANCH_COLORS = [
-  '#818cf8', // indigo
+  '#818cf8', // indigo (primary)
   '#34d399', // emerald
   '#f472b6', // pink
   '#fbbf24', // amber
   '#60a5fa', // blue
-  '#a78bfa', // violet
+  '#c084fc', // purple
   '#fb923c', // orange
-  '#2dd4bf', // teal
+  '#22d3ee', // cyan
 ]
 
 // ── Graph topology types ───────────────────────────────────
-
-interface Connection {
-  fromLane: number
-  toLane: number
-  type: 'straight' | 'merge' | 'fork'
-  color: string
-}
 
 interface GraphNode {
   lane: number
   color: string
   isMerge: boolean
-  connections: Connection[]
+}
+
+interface GraphEdge {
+  fromRow: number
+  fromLane: number
+  toRow: number
+  toLane: number
+  color: string
+}
+
+interface GraphResult {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  maxLanes: number
 }
 
 // ── Lane assignment algorithm ──────────────────────────────
 
-function buildGraph(commits: GitCommit[]): GraphNode[] {
+function buildGraph(commits: GitCommit[]): GraphResult {
   const nodes: GraphNode[] = []
+  const edges: GraphEdge[] = []
   // activeLanes[i] = sha that "owns" lane i, or null if free
   const activeLanes: (string | null)[] = []
-  // Map from sha → lane index (for parent lookups)
-  const shaToLane = new Map<string, number>()
-  // Map from sha → row index
   const shaToRow = new Map<string, number>()
+  const shaToLane = new Map<string, number>()
 
-  commits.forEach((c, idx) => {
-    shaToRow.set(c.sha, idx)
-  })
+  commits.forEach((c, idx) => shaToRow.set(c.sha, idx))
 
   for (let idx = 0; idx < commits.length; idx++) {
     const c = commits[idx]
     const isMerge = c.parents.length > 1
-    const connections: Connection[] = []
 
-    // 1. Find lane for this commit
+    // 1. Find lane for this commit (check if reserved by a child)
     let myLane = activeLanes.indexOf(c.sha)
     if (myLane === -1) {
-      // Not reserved — allocate a new lane (find first free slot)
+      // Not reserved — allocate first free slot
       myLane = activeLanes.indexOf(null)
       if (myLane === -1) {
         myLane = activeLanes.length
         activeLanes.push(null)
       }
     }
-    activeLanes[myLane] = null // free it, we'll reassign below
+    // Clear ALL occurrences of this SHA in activeLanes (fixes duplicate reservation bug)
+    for (let i = 0; i < activeLanes.length; i++) {
+      if (activeLanes[i] === c.sha) activeLanes[i] = null
+    }
     shaToLane.set(c.sha, myLane)
 
     const color = BRANCH_COLORS[myLane % BRANCH_COLORS.length]
@@ -83,172 +88,157 @@ function buildGraph(commits: GitCommit[]): GraphNode[] {
     // 2. Handle parents
     if (c.parents.length > 0) {
       const firstParent = c.parents[0]
-
-      // First parent continues in the same lane
-      if (!shaToLane.has(firstParent)) {
-        // Reserve this lane for the first parent
-        activeLanes[myLane] = firstParent
-      }
-
-      // Draw connection to first parent (straight or will be drawn by next row)
       const firstParentRow = shaToRow.get(firstParent)
-      if (firstParentRow !== undefined && firstParentRow > idx) {
-        connections.push({
+
+      if (firstParentRow !== undefined) {
+        // Clear any existing reservations for firstParent to prevent duplicates
+        for (let i = 0; i < activeLanes.length; i++) {
+          if (activeLanes[i] === firstParent) activeLanes[i] = null
+        }
+        // First parent inherits same lane
+        activeLanes[myLane] = firstParent
+        edges.push({
+          fromRow: idx,
           fromLane: myLane,
+          toRow: firstParentRow,
           toLane: myLane,
-          type: 'straight',
           color,
         })
       }
 
-      // Additional parents (merge sources)
+      // Merge parents (2nd, 3rd, …)
       for (let p = 1; p < c.parents.length; p++) {
         const parentSha = c.parents[p]
-        const parentLane = shaToLane.get(parentSha)
-        if (parentLane !== undefined) {
-          const pColor = BRANCH_COLORS[parentLane % BRANCH_COLORS.length]
-          connections.push({
-            fromLane: parentLane,
-            toLane: myLane,
-            type: 'merge',
-            color: pColor,
-          })
-        } else {
-          // Parent not yet seen — allocate a lane for it
-          let newLane = activeLanes.indexOf(null)
-          if (newLane === -1) {
-            newLane = activeLanes.length
-            activeLanes.push(null)
-          }
-          activeLanes[newLane] = parentSha
-          const pColor = BRANCH_COLORS[newLane % BRANCH_COLORS.length]
-          connections.push({
-            fromLane: newLane,
-            toLane: myLane,
-            type: 'merge',
-            color: pColor,
-          })
-        }
-      }
-    }
+        const parentRow = shaToRow.get(parentSha)
+        if (parentRow === undefined) continue
 
-    // 3. Continuation lines: any active lane that passes through this row
-    for (let l = 0; l < activeLanes.length; l++) {
-      if (activeLanes[l] !== null && l !== myLane) {
-        const lColor = BRANCH_COLORS[l % BRANCH_COLORS.length]
-        connections.push({
-          fromLane: l,
-          toLane: l,
-          type: 'straight',
-          color: lColor,
+        // Check if this parent already has a lane reserved
+        let parentLane = activeLanes.indexOf(parentSha)
+        if (parentLane === -1) {
+          // Not reserved — check if it was already rendered (has a lane)
+          const existingLane = shaToLane.get(parentSha)
+          if (existingLane !== undefined) {
+            parentLane = existingLane
+          } else {
+            // Allocate new lane
+            parentLane = activeLanes.indexOf(null)
+            if (parentLane === -1) {
+              parentLane = activeLanes.length
+              activeLanes.push(null)
+            }
+            activeLanes[parentLane] = parentSha
+          }
+        }
+
+        const pColor = BRANCH_COLORS[parentLane % BRANCH_COLORS.length]
+        edges.push({
+          fromRow: idx,
+          fromLane: myLane,
+          toRow: parentRow,
+          toLane: parentLane,
+          color: pColor,
         })
       }
     }
 
-    // Also draw continuation for myLane if it has a parent below
-    if (activeLanes[myLane] !== null) {
-      connections.push({
-        fromLane: myLane,
-        toLane: myLane,
-        type: 'straight',
-        color,
-      })
-    }
+    nodes.push({ lane: myLane, color, isMerge })
 
-    nodes.push({ lane: myLane, color, isMerge, connections })
+    // Trim trailing nulls to keep activeLanes compact
+    while (activeLanes.length > 0 && activeLanes[activeLanes.length - 1] === null) {
+      activeLanes.pop()
+    }
   }
 
-  // Trim unused lanes — find max lane used
-  return nodes
+  const maxLanes = Math.min(
+    8,
+    Math.max(
+      1,
+      ...nodes.map(n => n.lane + 1),
+      ...edges.map(e => Math.max(e.fromLane, e.toLane) + 1),
+    ),
+  )
+
+  return { nodes, edges, maxLanes }
 }
 
-// ── SVG Graph Cell ─────────────────────────────────────────
+// ── Single SVG Graph ───────────────────────────────────────
 
-function GraphCell({ node, maxLanes, isFirst, isLast }: {
-  node: GraphNode
+function GitGraph({ nodes, edges, maxLanes, rowYs }: {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
   maxLanes: number
-  isFirst: boolean
-  isLast: boolean
+  rowYs: number[]
 }) {
+  if (rowYs.length === 0) return null
+
   const w = maxLanes * LANE_W + LANE_W
-  const h = ROW_H
-  const cx = node.lane * LANE_W + LANE_W / 2 + LANE_W / 2
-  const cy = h / 2
+  const lastY = rowYs[rowYs.length - 1] ?? 0
+  const h = lastY + ROW_H / 2
+
+  const laneX = (lane: number) => lane * LANE_W + LANE_W
 
   return (
-    <svg width={w} height={h} className="flex-shrink-0" style={{ minWidth: w }}>
-      {/* Connection lines */}
-      {node.connections.map((conn, i) => {
-        const fromX = conn.fromLane * LANE_W + LANE_W / 2 + LANE_W / 2
-        const toX = conn.toLane * LANE_W + LANE_W / 2 + LANE_W / 2
+    <svg
+      width={w}
+      height={h}
+      className="absolute top-0 left-0"
+      style={{ pointerEvents: 'none' }}
+    >
+      {/* Edges (behind nodes) */}
+      {edges.map((e, i) => {
+        const fromX = laneX(e.fromLane)
+        const fromY = rowYs[e.fromRow]
+        const toX = laneX(e.toLane)
+        const toY = rowYs[e.toRow]
+        if (fromY === undefined || toY === undefined) return null
 
-        if (conn.type === 'straight') {
-          // Vertical pass-through line
-          const topY = conn.fromLane === node.lane && isFirst ? cy : 0
-          const botY = conn.fromLane === node.lane && isLast ? cy : h
+        if (fromX === toX) {
+          // Straight vertical line
           return (
             <line
-              key={`s-${i}`}
-              x1={fromX} y1={topY}
-              x2={fromX} y2={botY}
-              stroke={conn.color}
+              key={`e-${i}`}
+              x1={fromX} y1={fromY}
+              x2={toX} y2={toY}
+              stroke={e.color}
               strokeWidth={LINE_W}
-              opacity={0.35}
+              opacity={0.85}
             />
           )
         }
 
-        if (conn.type === 'merge') {
-          // Bezier curve from branch lane (top) to merge point (center)
-          const startX = fromX
-          const startY = 0
-          const endX = toX
-          const endY = cy
-          const cp1y = h * 0.6
-          const cp2y = h * 0.2
-          return (
-            <path
-              key={`m-${i}`}
-              d={`M ${startX} ${startY} C ${startX} ${cp1y}, ${endX} ${cp2y}, ${endX} ${endY}`}
-              fill="none"
-              stroke={conn.color}
-              strokeWidth={LINE_W}
-              opacity={0.35}
-            />
-          )
-        }
+        // Cross-lane edge: smooth S-curve (cubic bezier)
+        const midY = (fromY + toY) / 2
+        const d = `M ${fromX} ${fromY} C ${fromX} ${midY} ${toX} ${midY} ${toX} ${toY}`
 
-        if (conn.type === 'fork') {
-          const startX = fromX
-          const startY = cy
-          const endX = toX
-          const endY = h
-          const cp1y = h * 0.8
-          const cp2y = h * 0.4
-          return (
-            <path
-              key={`f-${i}`}
-              d={`M ${startX} ${startY} C ${startX} ${cp1y}, ${endX} ${cp2y}, ${endX} ${endY}`}
-              fill="none"
-              stroke={conn.color}
-              strokeWidth={LINE_W}
-              opacity={0.35}
-            />
-          )
-        }
-
-        return null
+        return (
+          <path
+            key={`e-${i}`}
+            d={d}
+            fill="none"
+            stroke={e.color}
+            strokeWidth={LINE_W}
+            opacity={0.85}
+          />
+        )
       })}
 
-      {/* Commit node */}
-      {node.isMerge ? (
-        <>
-          <circle cx={cx} cy={cy} r={NODE_R + 1} fill="none" stroke={node.color} strokeWidth={1.5} opacity={0.5} />
-          <circle cx={cx} cy={cy} r={NODE_R - 1} fill={node.color} />
-        </>
-      ) : (
-        <circle cx={cx} cy={cy} r={NODE_R} fill={node.color} />
-      )}
+      {/* Nodes (on top) */}
+      {nodes.map((n, i) => {
+        const cx = laneX(n.lane)
+        const cy = rowYs[i]
+        if (cy === undefined) return null
+
+        return n.isMerge ? (
+          <g key={`n-${i}`}>
+            <circle cx={cx} cy={cy} r={NODE_R + 1} fill="#1e1e2e" stroke={n.color} strokeWidth={2} />
+          </g>
+        ) : (
+          <g key={`n-${i}`}>
+            <circle cx={cx} cy={cy} r={NODE_R} fill={n.color} />
+            <circle cx={cx} cy={cy} r={NODE_R} fill="none" stroke="#1e1e2e" strokeWidth={2} />
+          </g>
+        )
+      })}
     </svg>
   )
 }
@@ -357,12 +347,30 @@ function CommitDetail({ projectId, sha, lang }: { projectId: string; sha: string
 
 export default function GitPanel({ commits, lang, projectId, onClose }: Props) {
   const [expandedSha, setExpandedSha] = useState<string | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const rowRefs = useRef<(HTMLDivElement | null)[]>([])
+  const [rowYs, setRowYs] = useState<number[]>([])
 
-  const graphNodes = buildGraph(commits)
-  const maxLanes = graphNodes.reduce((max, n) => {
-    const nodeLaneMax = n.connections.reduce((m, c) => Math.max(m, c.fromLane, c.toLane), n.lane)
-    return Math.max(max, nodeLaneMax)
-  }, 0) + 1
+  const { nodes, edges, maxLanes } = buildGraph(commits)
+  const graphW = maxLanes * LANE_W + LANE_W
+
+  // Measure actual row positions after render (handles expanded rows)
+  useLayoutEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const containerTop = container.offsetTop
+    const ys: number[] = []
+    for (let i = 0; i < commits.length; i++) {
+      const el = rowRefs.current[i]
+      if (el) {
+        // Node Y = top of the row wrapper + half of the fixed commit-row height
+        ys.push(el.offsetTop - containerTop + ROW_H / 2)
+      } else {
+        ys.push(i * ROW_H + ROW_H / 2)
+      }
+    }
+    setRowYs(ys)
+  }, [commits, expandedSha])
 
   const toggleExpand = useCallback((sha: string) => {
     setExpandedSha(prev => prev === sha ? null : sha)
@@ -386,70 +394,79 @@ export default function GitPanel({ commits, lang, projectId, onClose }: Props) {
         {commits.length === 0 && (
           <p className="px-4 py-8 text-xs text-txt-muted text-center">{t('git.no_commits', lang)}</p>
         )}
-        {commits.map((c, i) => {
-          const node = graphNodes[i]
-          const isExpanded = expandedSha === c.sha
-          const isFirst = i === 0
-          const isLast = i === commits.length - 1
+        {commits.length > 0 && (
+          <div ref={containerRef} className="relative overflow-hidden">
+            {/* Single SVG graph overlay */}
+            <GitGraph nodes={nodes} edges={edges} maxLanes={maxLanes} rowYs={rowYs} />
 
-          return (
-            <div key={c.sha}>
-              {/* Commit row */}
-              <div
-                className="flex cursor-pointer hover:bg-surface-light/50 transition-all duration-100"
-                style={{ minHeight: ROW_H }}
-                onClick={() => toggleExpand(c.sha)}
-              >
-                {/* Graph column */}
-                <GraphCell node={node} maxLanes={maxLanes} isFirst={isFirst} isLast={isLast && !isExpanded} />
+            {/* Commit rows */}
+            {commits.map((c, i) => {
+              const node = nodes[i]
+              const isExpanded = expandedSha === c.sha
 
-                {/* Info column */}
-                <div className="flex-1 py-1.5 pr-3 min-w-0 flex flex-col justify-center">
-                  <div className="flex items-center gap-1.5">
-                    <ChevronRight
-                      size={10}
-                      className={`flex-shrink-0 text-txt-muted transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}
-                    />
-                    <span className="text-[11px] text-txt truncate leading-snug">{c.message}</span>
+              return (
+                <div
+                  key={c.sha}
+                  ref={el => { rowRefs.current[i] = el }}
+                >
+                  {/* Commit row */}
+                  <div
+                    className="flex cursor-pointer hover:bg-surface-light/50 transition-all duration-100"
+                    style={{ minHeight: ROW_H, paddingLeft: graphW }}
+                    onClick={() => toggleExpand(c.sha)}
+                  >
+                    {/* Info column */}
+                    <div className="flex-1 py-1.5 pr-3 min-w-0 flex flex-col justify-center">
+                      <div className="flex items-center gap-1.5">
+                        <ChevronRight
+                          size={10}
+                          className={`flex-shrink-0 text-txt-muted transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}
+                        />
+                        <span className="text-[11px] text-txt truncate leading-snug">{c.message}</span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5 pl-4">
+                        <code className="text-[10px] text-accent font-mono flex-shrink-0">{c.short}</code>
+                        <span className="text-[10px] text-txt-muted truncate">{c.author}</span>
+                        <span className="text-[10px] text-txt-muted flex-shrink-0">{c.time_ago}</span>
+                      </div>
+                      {c.refs.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1 pl-4">
+                          {c.refs.map(ref => {
+                            const isHead = ref.includes('HEAD')
+                            return (
+                              <span
+                                key={ref}
+                                className="text-[9px] px-1.5 py-0.5 rounded-full font-mono"
+                                style={{
+                                  backgroundColor: isHead ? 'var(--color-accent, #818cf8)' + '20' : node.color + '15',
+                                  color: isHead ? 'var(--color-accent, #818cf8)' : node.color,
+                                  border: `1px solid ${isHead ? 'var(--color-accent, #818cf8)' : node.color}30`,
+                                  ...(isHead ? { boxShadow: `0 0 6px ${node.color}25` } : {}),
+                                }}
+                              >
+                                {ref}
+                              </span>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 mt-0.5 pl-4">
-                    <code className="text-[10px] text-accent font-mono flex-shrink-0">{c.short}</code>
-                    <span className="text-[10px] text-txt-muted truncate">{c.author}</span>
-                    <span className="text-[10px] text-txt-muted flex-shrink-0">{c.time_ago}</span>
-                  </div>
-                  {c.refs.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1 pl-4">
-                      {c.refs.map(ref => {
-                        const isHead = ref.includes('HEAD')
-                        return (
-                          <span
-                            key={ref}
-                            className="text-[9px] px-1.5 py-0.5 rounded-full font-mono"
-                            style={{
-                              backgroundColor: isHead ? 'var(--color-accent, #818cf8)' + '20' : node.color + '15',
-                              color: isHead ? 'var(--color-accent, #818cf8)' : node.color,
-                              border: `1px solid ${isHead ? 'var(--color-accent, #818cf8)' : node.color}30`,
-                              ...(isHead ? { boxShadow: `0 0 6px ${node.color}25` } : {}),
-                            }}
-                          >
-                            {ref}
-                          </span>
-                        )
-                      })}
+
+                  {/* Expanded detail */}
+                  {isExpanded && (
+                    <div
+                      className="border-t border-dashed border-surface-light mb-1"
+                      style={{ marginLeft: graphW, marginRight: 8 }}
+                    >
+                      <CommitDetail projectId={projectId} sha={c.sha} lang={lang} />
                     </div>
                   )}
                 </div>
-              </div>
-
-              {/* Expanded detail */}
-              {isExpanded && (
-                <div className="border-t border-dashed border-surface-light ml-2 mr-2 mb-1">
-                  <CommitDetail projectId={projectId} sha={c.sha} lang={lang} />
-                </div>
-              )}
-            </div>
-          )
-        })}
+              )
+            })}
+          </div>
+        )}
       </div>
     </div>
   )

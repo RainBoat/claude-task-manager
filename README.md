@@ -62,10 +62,13 @@ Hooks：`useProjects`、`useTasks`、`useWorkers`、`useGitLog`、`useTheme`、`
 | 脚本 | 说明 |
 |------|------|
 | `run_task.sh` | 单任务容器入口：接收环境变量 → 构建 prompt → 运行 `claude -p` → 提交 → 回调 Manager |
+| `worker-entrypoint.sh` | Worker 容器 entrypoint，初始化环境后调用 `run_task.sh` |
 | `merge_and_test.sh` | Rebase 到 main → 运行测试 → 用 Claude 解决冲突/修复测试失败，最多重试 3 次 |
 | `ralph.sh` | 进程模式 Worker 循环（备用，容器模式下不使用） |
 | `claim_task.py` | CLI 桥接，Worker 调用 Dispatcher 函数 |
-| `log_experience.py` | 将任务完成摘要追加到仓库的 `PROGRESS.md` |
+| `log_experience.py` | 将任务完成摘要追加到仓库的 `PROGRESS.md` 和全局经验库 |
+| `global_experience.py` | 跨项目经验存储与检索：写入/查询 `GLOBAL_PROGRESS.md` |
+| `query_global_experience.py` | CLI 封装，供 Manager/Worker 查询跨项目经验片段 |
 
 ## 任务生命周期
 
@@ -168,10 +171,13 @@ claude-parallel-dev/
 │   └── vite.config.ts
 ├── worker/                     # Worker 脚本
 │   ├── run_task.sh             # 容器模式入口
+│   ├── worker-entrypoint.sh    # Worker 容器 entrypoint
 │   ├── merge_and_test.sh       # 合并与测试
 │   ├── ralph.sh                # 进程模式循环
 │   ├── claim_task.py
-│   └── log_experience.py
+│   ├── log_experience.py
+│   ├── global_experience.py    # 跨项目经验存储与检索
+│   └── query_global_experience.py  # 跨项目经验查询 CLI
 ├── Dockerfile                  # Manager 镜像
 ├── Dockerfile.worker           # Worker 镜像
 ├── docker-compose.yml
@@ -213,6 +219,7 @@ claude-parallel-dev/
 - Worker 日志：`/app/data/projects/{id}/logs/{worker_id}.jsonl`
 - Git 仓库：`/app/data/projects/{id}/repo/`
 - Worktree：`/app/data/projects/{id}/worktrees/{worker_id}/`
+- 全局经验：`/app/data/experience/GLOBAL_PROGRESS.md`
 
 ## Worker 工作机制
 

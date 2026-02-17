@@ -8,6 +8,7 @@ import LogEntryRow from './LogEntryRow'
 
 interface Props {
   workerId: string
+  projectId?: string
   lang: Lang
   onClose: () => void
 }
@@ -21,7 +22,7 @@ function hasContent(entry: FeedEntry): boolean {
   return !!(entry.text || entry.message)
 }
 
-export default function LogModal({ workerId, lang, onClose }: Props) {
+export default function LogModal({ workerId, projectId, lang, onClose }: Props) {
   const [entries, setEntries] = useState<FeedEntry[]>([])
   const [connected, setConnected] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -36,7 +37,10 @@ export default function LogModal({ workerId, lang, onClose }: Props) {
   }, [])
 
   useEffect(() => {
-    const ws = createLogSocket(workerId)
+    const ws = createLogSocket(workerId, {
+      projectId,
+      history: projectId ? 0 : 50,
+    })
     wsRef.current = ws
 
     ws.onopen = () => setConnected(true)
@@ -66,7 +70,7 @@ export default function LogModal({ workerId, lang, onClose }: Props) {
     }
 
     return () => { ws.close() }
-  }, [workerId])
+  }, [workerId, projectId])
 
   useEffect(() => {
     if (isNearBottom.current) {

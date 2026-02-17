@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Optional
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, UploadFile, File
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, UploadFile, File, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -1227,25 +1227,75 @@ async def transcribe_voice(file: UploadFile = File(...)):
 # WebSocket — Live log streaming
 # ============================================================
 
+_ACTIVE_WORKER_LOG_STATUSES = {
+    TaskStatus.CLAIMED,
+    TaskStatus.RUNNING,
+    TaskStatus.MERGING,
+    TaskStatus.TESTING,
+}
+
+
+def _project_log_path(project_id: str, worker_id: str) -> str:
+    return f"/app/data/projects/{project_id}/logs/{worker_id}.jsonl"
+
+
+def _resolve_worker_log_path(
+    worker_id: str,
+    *,
+    project_hint: Optional[str] = None,
+    task_hint: Optional[str] = None,
+) -> str:
+    projects = dispatcher.get_all_projects()
+
+    # 1) Explicit project hint has the highest priority.
+    if project_hint and dispatcher.get_project(project_hint):
+        return _project_log_path(project_hint, worker_id)
+
+    # 2) If task is provided, find its project.
+    if task_hint:
+        for project in projects:
+            if dispatcher.get_task(project.id, task_hint):
+                return _project_log_path(project.id, worker_id)
+
+    # 3) If worker is currently active on a task, route to that project's log.
+    for project in projects:
+        for task in dispatcher.get_all_tasks(project.id):
+            if task.worker_id == worker_id and task.status in _ACTIVE_WORKER_LOG_STATUSES:
+                return _project_log_path(project.id, worker_id)
+
+    # 4) Fallback to the newest existing project log for this worker.
+    existing_logs: list[str] = []
+    for project in projects:
+        candidate = _project_log_path(project.id, worker_id)
+        if os.path.exists(candidate):
+            existing_logs.append(candidate)
+    if existing_logs:
+        return max(existing_logs, key=os.path.getmtime)
+
+    # 5) Legacy global path fallback.
+    log_dir = os.environ.get("LOG_DIR", "/app/data/logs")
+    return os.path.join(log_dir, f"{worker_id}.jsonl")
+
+
 @app.websocket("/ws/logs/{worker_id}")
-async def ws_logs(websocket: WebSocket, worker_id: str):
+async def ws_logs(
+    websocket: WebSocket,
+    worker_id: str,
+    project_id: Optional[str] = Query(default=None),
+    task_id: Optional[str] = Query(default=None),
+    history: int = Query(default=50, ge=0, le=500),
+):
     await websocket.accept()
 
-    # Try project-specific log dirs first, fall back to global
-    log_path = None
-    for project in dispatcher.get_all_projects():
-        candidate = f"/app/data/projects/{project.id}/logs/{worker_id}.jsonl"
-        if os.path.exists(candidate):
-            log_path = candidate
-            break
-
-    if not log_path:
-        log_dir = os.environ.get("LOG_DIR", "/app/data/logs")
-        log_path = os.path.join(log_dir, f"{worker_id}.jsonl")
+    log_path = _resolve_worker_log_path(
+        worker_id,
+        project_hint=project_id,
+        task_hint=task_id,
+    )
 
     try:
         existing = parse_log_file(log_path)
-        for event in existing[-50:]:
+        for event in existing[-history:] if history > 0 else []:
             await websocket.send_json(event)
 
         async for event in tail_log(log_path):

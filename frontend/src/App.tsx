@@ -53,7 +53,7 @@ export default function App() {
 
   // Modal state
   const [planTask, setPlanTask] = useState<Task | null>(null)
-  const [logWorkerId, setLogWorkerId] = useState<string | null>(null)
+  const [logContext, setLogContext] = useState<{ workerId: string; projectId?: string } | null>(null)
   const [showBatchReview, setShowBatchReview] = useState(false)
 
   const planPendingTasks = tasks.filter(t => t.status === 'plan_pending')
@@ -104,7 +104,14 @@ export default function App() {
   }, [activeProjectId, refreshTasks])
 
   const handleViewLog = useCallback((workerId: string) => {
-    setLogWorkerId(workerId)
+    setLogContext({
+      workerId,
+      projectId: activeProjectId ?? undefined,
+    })
+  }, [activeProjectId])
+
+  const handleViewLogGlobal = useCallback((workerId: string) => {
+    setLogContext({ workerId })
   }, [])
 
   const handleMerge = useCallback(async (taskId: string, squash: boolean) => {
@@ -227,7 +234,7 @@ export default function App() {
       </div>
 
       {/* Worker Status Bar */}
-      <WorkerStatusBar workers={workers} lang={lang} activeProjectId={activeProjectId} onViewFullLog={handleViewLog} onStopTask={handleCancel} />
+      <WorkerStatusBar workers={workers} lang={lang} activeProjectId={activeProjectId} onViewFullLog={handleViewLogGlobal} onStopTask={handleCancel} />
 
       {/* Modals */}
       {showAddProject && (
@@ -260,11 +267,12 @@ export default function App() {
         />
       )}
 
-      {logWorkerId && (
+      {logContext && (
         <LogModal
-          workerId={logWorkerId}
+          workerId={logContext.workerId}
+          projectId={logContext.projectId}
           lang={lang}
-          onClose={() => setLogWorkerId(null)}
+          onClose={() => setLogContext(null)}
         />
       )}
     </div>

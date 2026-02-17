@@ -213,9 +213,17 @@ export async function fetchDispatcherEvents(limit = 50): Promise<DispatcherEvent
 // WebSocket
 // ============================================================
 
-export function createLogSocket(workerId: string): WebSocket {
+export function createLogSocket(
+  workerId: string,
+  opts?: { projectId?: string; taskId?: string; history?: number }
+): WebSocket {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return new WebSocket(`${proto}//${location.host}/ws/logs/${workerId}`)
+  const params = new URLSearchParams()
+  if (opts?.projectId) params.set('project_id', opts.projectId)
+  if (opts?.taskId) params.set('task_id', opts.taskId)
+  if (typeof opts?.history === 'number') params.set('history', String(opts.history))
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  return new WebSocket(`${proto}//${location.host}/ws/logs/${workerId}${suffix}`)
 }
 
 export function createPlanSocket(projectId: string, taskId: string): WebSocket {

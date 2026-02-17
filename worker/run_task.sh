@@ -73,9 +73,9 @@ notify_status() {
           + (if $branch != "" then {branch: $branch} else {} end)
           + (if $commit != "" then {commit: $commit} else {} end)
           + (if $error != "" then {error: $error} else {} end))')
-    curl -sf -X POST "${MANAGER_URL}/api/internal/tasks/${PROJECT_ID}/${TASK_ID}/status" \
+    curl --retry 3 --retry-delay 1 --retry-connrefused --max-time 15 -sf -X POST "${MANAGER_URL}/api/internal/tasks/${PROJECT_ID}/${TASK_ID}/status" \
         -H "Content-Type: application/json" \
-        -d "$body" >/dev/null 2>&1 || true
+        -d "$body" >/dev/null 2>&1
 }
 
 # --- 1. Notify manager: running ---
@@ -173,6 +173,7 @@ echo "[${WORKER_ID}] Running Claude Code..."
 
 # --- 5. Run Claude Code ---
 : > "$LOG_FILE"
+BEFORE_HEAD=$(git -C /workspace rev-parse HEAD 2>/dev/null || echo "")
 
 claude -p "$PROMPT" \
     --dangerously-skip-permissions \
@@ -233,8 +234,18 @@ if [ -z "$COMMIT_ID" ]; then
     exit 1
 fi
 
+if [ -n "$BEFORE_HEAD" ] && [ "$COMMIT_ID" = "$BEFORE_HEAD" ]; then
+    echo "[${WORKER_ID}] No new commits produced on branch"
+    notify_status "failed" --error "worker produced no new commits on branch" || true
+    exit 1
+fi
+
 # --- 7. Notify manager: merging (success) ---
 echo "[${WORKER_ID}] Task complete. Commit: ${COMMIT_ID}"
-notify_status "merging" --commit "$COMMIT_ID"
+if ! notify_status "merging" --commit "$COMMIT_ID"; then
+    echo "[${WORKER_ID}] ERROR: failed to send merging callback"
+    notify_status "failed" --error "failed to send merging callback" || true
+    exit 2
+fi
 
 exit 0

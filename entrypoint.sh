@@ -164,7 +164,8 @@ except Exception:
             git -C "$repo_dir" fetch origin 2>/dev/null || true
         elif [ "$status" = "ready" ] && [ ! -d "$repo_dir/.git" ] && [ -n "$repo_url" ]; then
             echo "Cloning repo for project ${project_id}..."
-            mkdir -p "$repo_dir"
+            # repo_dir may be a symlink in local-project mode; avoid startup crash.
+            mkdir -p "$repo_dir" 2>/dev/null || true
             git clone --branch "$branch" "$repo_url" "$repo_dir" 2>/dev/null || true
         fi
 

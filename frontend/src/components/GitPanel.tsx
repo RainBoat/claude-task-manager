@@ -55,7 +55,6 @@ interface GraphResult {
 
 function buildGraph(commits: GitCommit[]): GraphResult {
   const nodes: GraphNode[] = []
-  const edges: GraphEdge[] = []
   // activeLanes[i] = sha that "owns" lane i, or null if free
   const activeLanes: (string | null)[] = []
   const shaToRow = new Map<string, number>()
@@ -63,21 +62,21 @@ function buildGraph(commits: GitCommit[]): GraphResult {
 
   commits.forEach((c, idx) => shaToRow.set(c.sha, idx))
 
+  // ── Pass 1: Assign lanes ──────────────────────────────────
   for (let idx = 0; idx < commits.length; idx++) {
     const c = commits[idx]
     const isMerge = c.parents.length > 1
 
-    // 1. Find lane for this commit (check if reserved by a child)
+    // Find lane for this commit (check if reserved by a child)
     let myLane = activeLanes.indexOf(c.sha)
     if (myLane === -1) {
-      // Not reserved — allocate first free slot
       myLane = activeLanes.indexOf(null)
       if (myLane === -1) {
         myLane = activeLanes.length
         activeLanes.push(null)
       }
     }
-    // Clear ALL occurrences of this SHA in activeLanes (fixes duplicate reservation bug)
+    // Clear ALL occurrences of this SHA in activeLanes
     for (let i = 0; i < activeLanes.length; i++) {
       if (activeLanes[i] === c.sha) activeLanes[i] = null
     }
@@ -85,59 +84,32 @@ function buildGraph(commits: GitCommit[]): GraphResult {
 
     const color = BRANCH_COLORS[myLane % BRANCH_COLORS.length]
 
-    // 2. Handle parents
+    // Reserve lanes for parents
     if (c.parents.length > 0) {
       const firstParent = c.parents[0]
-      const firstParentRow = shaToRow.get(firstParent)
-
-      if (firstParentRow !== undefined) {
+      if (shaToRow.has(firstParent)) {
         // Clear any existing reservations for firstParent to prevent duplicates
         for (let i = 0; i < activeLanes.length; i++) {
           if (activeLanes[i] === firstParent) activeLanes[i] = null
         }
         // First parent inherits same lane
         activeLanes[myLane] = firstParent
-        edges.push({
-          fromRow: idx,
-          fromLane: myLane,
-          toRow: firstParentRow,
-          toLane: myLane,
-          color,
-        })
       }
 
-      // Merge parents (2nd, 3rd, …)
+      // Merge parents (2nd, 3rd, …) — allocate separate lanes
       for (let p = 1; p < c.parents.length; p++) {
         const parentSha = c.parents[p]
-        const parentRow = shaToRow.get(parentSha)
-        if (parentRow === undefined) continue
+        if (!shaToRow.has(parentSha)) continue
 
-        // Check if this parent already has a lane reserved
         let parentLane = activeLanes.indexOf(parentSha)
         if (parentLane === -1) {
-          // Not reserved — check if it was already rendered (has a lane)
-          const existingLane = shaToLane.get(parentSha)
-          if (existingLane !== undefined) {
-            parentLane = existingLane
-          } else {
-            // Allocate new lane
-            parentLane = activeLanes.indexOf(null)
-            if (parentLane === -1) {
-              parentLane = activeLanes.length
-              activeLanes.push(null)
-            }
-            activeLanes[parentLane] = parentSha
+          parentLane = activeLanes.indexOf(null)
+          if (parentLane === -1) {
+            parentLane = activeLanes.length
+            activeLanes.push(null)
           }
+          activeLanes[parentLane] = parentSha
         }
-
-        const pColor = BRANCH_COLORS[parentLane % BRANCH_COLORS.length]
-        edges.push({
-          fromRow: idx,
-          fromLane: myLane,
-          toRow: parentRow,
-          toLane: parentLane,
-          color: pColor,
-        })
       }
     }
 
@@ -148,6 +120,48 @@ function buildGraph(commits: GitCommit[]): GraphResult {
       activeLanes.pop()
     }
   }
+
+  // ── Pass 2: Create edge segments using final lane assignments ─────
+  // Segment-by-segment rendering avoids thick overlapping strokes when
+  // a parent is many rows away in topo order.
+  const edgeMap = new Map<string, GraphEdge>()
+  const addEdge = (fromRow: number, fromLane: number, toRow: number, toLane: number, color: string) => {
+    if (fromRow === toRow) return
+    const key = `${fromRow}|${fromLane}|${toRow}|${toLane}|${color}`
+    if (edgeMap.has(key)) return
+    edgeMap.set(key, { fromRow, fromLane, toRow, toLane, color })
+  }
+
+  for (let idx = 0; idx < commits.length; idx++) {
+    const c = commits[idx]
+    const myLane = shaToLane.get(c.sha)!
+    const myColor = BRANCH_COLORS[myLane % BRANCH_COLORS.length]
+
+    for (const parentSha of c.parents) {
+      const parentRow = shaToRow.get(parentSha)
+      if (parentRow === undefined) continue
+      const parentLane = shaToLane.get(parentSha)
+      if (parentLane === undefined) continue
+      if (parentRow <= idx) continue
+
+      if (parentLane === myLane) {
+        for (let row = idx; row < parentRow; row++) {
+          addEdge(row, myLane, row + 1, myLane, myColor)
+        }
+        continue
+      }
+
+      const parentColor = BRANCH_COLORS[parentLane % BRANCH_COLORS.length]
+      const firstHopRow = Math.min(idx + 1, parentRow)
+      addEdge(idx, myLane, firstHopRow, parentLane, parentColor)
+
+      for (let row = firstHopRow; row < parentRow; row++) {
+        addEdge(row, parentLane, row + 1, parentLane, parentColor)
+      }
+    }
+  }
+
+  const edges = Array.from(edgeMap.values())
 
   const maxLanes = Math.min(
     8,
@@ -230,12 +244,11 @@ function GitGraph({ nodes, edges, maxLanes, rowYs }: {
 
         return n.isMerge ? (
           <g key={`n-${i}`}>
-            <circle cx={cx} cy={cy} r={NODE_R + 1} fill="#1e1e2e" stroke={n.color} strokeWidth={2} />
+            <circle cx={cx} cy={cy} r={NODE_R + 1} fill="var(--bg-surface, #fff)" stroke={n.color} strokeWidth={2} />
           </g>
         ) : (
           <g key={`n-${i}`}>
             <circle cx={cx} cy={cy} r={NODE_R} fill={n.color} />
-            <circle cx={cx} cy={cy} r={NODE_R} fill="none" stroke="#1e1e2e" strokeWidth={2} />
           </g>
         )
       })}
@@ -349,6 +362,7 @@ export default function GitPanel({ commits, lang, projectId, onClose }: Props) {
   const [expandedSha, setExpandedSha] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const rowRefs = useRef<(HTMLDivElement | null)[]>([])
+  const titleRowRefs = useRef<(HTMLDivElement | null)[]>([])
   const [rowYs, setRowYs] = useState<number[]>([])
 
   const { nodes, edges, maxLanes } = buildGraph(commits)
@@ -358,16 +372,18 @@ export default function GitPanel({ commits, lang, projectId, onClose }: Props) {
   useLayoutEffect(() => {
     const container = containerRef.current
     if (!container) return
-    const containerTop = container.offsetTop
+    const containerRect = container.getBoundingClientRect()
     const ys: number[] = []
     for (let i = 0; i < commits.length; i++) {
-      const el = rowRefs.current[i]
-      if (el) {
-        // Node Y = top of the row wrapper + half of the fixed commit-row height
-        ys.push(el.offsetTop - containerTop + ROW_H / 2)
-      } else {
-        ys.push(i * ROW_H + ROW_H / 2)
+      const titleEl = titleRowRefs.current[i]
+      if (titleEl) {
+        const titleRect = titleEl.getBoundingClientRect()
+        ys.push(titleRect.top - containerRect.top + titleRect.height / 2)
+        continue
       }
+
+      const rowEl = rowRefs.current[i]
+      ys.push(rowEl ? rowEl.offsetTop + ROW_H / 2 : i * ROW_H + ROW_H / 2)
     }
     setRowYs(ys)
   }, [commits, expandedSha])
@@ -417,7 +433,10 @@ export default function GitPanel({ commits, lang, projectId, onClose }: Props) {
                   >
                     {/* Info column */}
                     <div className="flex-1 py-1.5 pr-3 min-w-0 flex flex-col justify-center">
-                      <div className="flex items-center gap-1.5">
+                      <div
+                        ref={el => { titleRowRefs.current[i] = el }}
+                        className="flex items-center gap-1.5"
+                      >
                         <ChevronRight
                           size={10}
                           className={`flex-shrink-0 text-txt-muted transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}

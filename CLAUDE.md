@@ -48,9 +48,6 @@ ssh -p 11426 leonard@6.tcp.cpolar.cn
 # 同步本地文件到 Mac Mini（排除 .env 避免覆盖远程配置）
 tar czf - --exclude='node_modules' --exclude='.git' --exclude='data' --exclude='.env' . | ssh -p 11426 leonard@6.tcp.cpolar.cn "cd ~/claude-parallel-dev && tar xzf -"
 
-# 远程 Dockerfile 需用官方 Docker Hub（不用国内镜像），同步后替换：
-ssh -p 11426 leonard@6.tcp.cpolar.cn "cd ~/claude-parallel-dev && sed -i '' 's|docker.1ms.run/library/||g' Dockerfile Dockerfile.worker"
-
 # 重建并重启
 ssh -p 11426 leonard@6.tcp.cpolar.cn "export PATH=/usr/local/bin:\$PATH && cd ~/claude-parallel-dev && docker compose up --build -d"
 
@@ -89,7 +86,7 @@ ssh -p 21714 foresight@1.tcp.cpolar.cn "cd C:\Users\foresight\claude-parallel-de
 - apt: 直接访问 deb.debian.org（通过代理）
 - pip: `pypi.tuna.tsinghua.edu.cn`（清华镜像）
 - npm: `registry.npmmirror.com`（淘宝镜像）
-- Docker base image: `docker.1ms.run`（国内 Docker Hub 镜像）
+- Docker base image: `docker.io/library`（官方 Docker Hub）
 
 ### 远程构建注意事项
 

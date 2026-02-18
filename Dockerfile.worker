@@ -1,7 +1,7 @@
 # Lightweight worker image — only runs claude CLI inside an isolated container.
 # No manager code, no frontend, no FastAPI.
 
-FROM docker.1ms.run/library/node:20-bookworm
+FROM node:20-bookworm
 
 # Minimal system deps + gosu for root→claude privilege drop
 RUN apt-get update && apt-get install -y --no-install-recommends \

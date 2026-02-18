@@ -1,4 +1,4 @@
-FROM docker.1ms.run/library/node:20-bookworm
+FROM node:20-bookworm
 
 # System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \

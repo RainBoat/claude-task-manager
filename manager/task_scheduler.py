@@ -40,6 +40,29 @@ def _run_git(args: list[str], cwd: str, timeout: int = 60) -> subprocess.Complet
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout, cwd=cwd)
 
 
+def _stash_dirty_repo(repo_dir: str, worker_id: str) -> bool:
+    """Stash local changes (including untracked) before merge to keep repo_dir clean."""
+    status = _run_git(["git", "status", "--porcelain"], cwd=repo_dir)
+    if status.returncode != 0:
+        logger.warning(f"[{worker_id}] Cannot inspect repo status before merge: {status.stderr[:200]}")
+        return False
+
+    if not status.stdout.strip():
+        return True
+
+    stash_msg = f"auto-merge preflight ({worker_id}) {datetime.utcnow().isoformat()}"
+    logger.warning(f"[{worker_id}] Repo dirty before auto-merge, stashing local changes")
+    stash = _run_git(
+        ["git", "stash", "push", "--include-untracked", "-m", stash_msg],
+        cwd=repo_dir,
+        timeout=120,
+    )
+    if stash.returncode != 0:
+        logger.warning(f"[{worker_id}] Failed to stash local changes: {stash.stderr[:200]}")
+        return False
+    return True
+
+
 def _load_cross_project_experience(project_id: str, task_title: str, task_desc: str) -> str:
     """Load relevant experience snippets from other projects."""
     if not os.path.isfile(_QUERY_GLOBAL_EXPERIENCE_SCRIPT):
@@ -190,6 +213,10 @@ def _do_auto_merge(
     auto_push: bool, worker_id: str,
 ) -> Optional[str]:
     """Merge branch into main, optionally push. Returns final commit SHA or None on failure."""
+    if not _stash_dirty_repo(repo_dir, worker_id):
+        logger.warning(f"[{worker_id}] Cannot prepare clean repo for auto-merge")
+        return None
+
     # Remove untracked CLAUDE.md to prevent merge conflicts
     claude_md = os.path.join(repo_dir, "CLAUDE.md")
     if os.path.exists(claude_md):

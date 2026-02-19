@@ -472,6 +472,14 @@ async def merge_task(project_id: str, task_id: str, body: MergeRequest):
             if not task.branch:
                 return JSONResponse(status_code=400, content={"error": "task has no branch"})
 
+            prepared, prep_error = await loop.run_in_executor(
+                None, lambda: _stash_dirty_repo(repo_dir, f"{project_id}/{task_id}")
+            )
+            if not prepared:
+                return JSONResponse(status_code=500, content={
+                    "error": f"Cannot prepare clean repo for merge: {prep_error[:300] if prep_error else 'unknown error'}"
+                })
+
             # Best-effort fetch to improve checkout fallback for origin/<base>.
             await loop.run_in_executor(None, lambda: subprocess.run(
                 ["git", "fetch", "origin"],
@@ -557,6 +565,34 @@ def _is_tracked(repo_dir: str, filename: str) -> bool:
         return r.returncode == 0
     except Exception:
         return False
+
+
+def _stash_dirty_repo(repo_dir: str, label: str) -> tuple[bool, str | None]:
+    """Stash local changes (including untracked) so merge runs on a clean worktree."""
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True, text=True, timeout=10, cwd=repo_dir,
+        )
+        if status.returncode != 0:
+            err = status.stderr[:300] if status.stderr else status.stdout[:300]
+            return False, f"git status failed: {err}"
+
+        if not status.stdout.strip():
+            return True, None
+
+        stash_msg = f"manual-merge preflight ({label}) {datetime.utcnow().isoformat()}"
+        stash = subprocess.run(
+            ["git", "stash", "push", "--include-untracked", "-m", stash_msg],
+            capture_output=True, text=True, timeout=120, cwd=repo_dir,
+        )
+        if stash.returncode != 0:
+            err = stash.stderr[:300] if stash.stderr else stash.stdout[:300]
+            return False, f"git stash failed: {err}"
+        logger.warning(f"[merge:{label}] Stashed dirty repo state before merge")
+        return True, None
+    except Exception as e:
+        return False, str(e)
 
 
 @app.post("/api/projects/{project_id}/git/push")
